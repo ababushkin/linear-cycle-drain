@@ -1,0 +1,19 @@
+# Per-issue worktrees created by drain-cycle.
+.worktrees/
+
+# Operator secrets (LINEAR_API_KEY etc).
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
