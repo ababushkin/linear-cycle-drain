@@ -1,7 +1,11 @@
 """Prompt builder for spawned ``claude -p`` sessions.
 
-Walking-skeleton placeholder (Task 1 / ABA-198) — full template lands in
-Task 4 / ABA-201.
+The prompt is the entire contract between the orchestrator and the spawned
+agent — there's no system prompt, no multi-turn loop. The four-segment
+ordering below is load-bearing: the agent reads top-down, so context
+(title + body) comes before instructions (preamble + tail), and the tail
+line is last so it stays in the trailing-tokens window the model attends
+to most strongly.
 """
 from __future__ import annotations
 
@@ -9,16 +13,27 @@ from pathlib import Path
 from typing import Any
 
 
-def build(issue: dict[str, Any], worktree: Path) -> str:
-    """Render the minimal prompt for the walking skeleton.
+_TAIL = "when complete, move this issue to Done via Linear MCP"
 
-    The tail line is the load-bearing instruction: it tells the agent how
-    the orchestrator knows the task is done.
-    """
+
+def build(issue: dict[str, Any], worktree: Path) -> str:
     title = issue.get("title", "")
     description = issue.get("description") or ""
+    identifier = issue.get("identifier", "")
+
+    preamble = (
+        "---\n\n"
+        "Execution instructions:\n"
+        f"- Working directory: {worktree}\n"
+        "- Base branch: main\n"
+        f"- When done, transition issue {identifier} to Done in Linear via "
+        "the Linear MCP server (`mcp__claude_ai_Linear__save_issue` with "
+        'state: "Done").\n'
+    )
+
     return (
         f"# {title}\n\n"
         f"{description}\n\n"
-        "when complete, move this issue to Done via Linear MCP\n"
+        f"{preamble}\n"
+        f"{_TAIL}\n"
     )
