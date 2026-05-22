@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from drain_cycle.prompt import build
+from drain_cycle.prompt import _TAIL, build
 
 
 def _fixture_issue() -> dict:
@@ -46,7 +46,7 @@ def test_prompt_contains_four_segments_in_order(tmp_path: Path) -> None:
         f"# {issue['title']}",
         issue["description"],
         "Execution instructions:",
-        "when complete, move this issue to Done via Linear MCP",
+        _TAIL,
     )
     assert title_idx < body_idx < preamble_idx < tail_idx
 
@@ -71,7 +71,7 @@ def test_tail_line_is_the_last_non_empty_line(tmp_path: Path) -> None:
     rendered = build(issue, worktree)
 
     non_empty = [line for line in rendered.splitlines() if line.strip()]
-    assert non_empty[-1] == "when complete, move this issue to Done via Linear MCP"
+    assert non_empty[-1] == _TAIL
 
 
 def test_empty_description_does_not_break_rendering(tmp_path: Path) -> None:
@@ -85,6 +85,6 @@ def test_empty_description_does_not_break_rendering(tmp_path: Path) -> None:
         rendered,
         f"# {issue['title']}",
         "Execution instructions:",
-        "when complete, move this issue to Done via Linear MCP",
+        _TAIL,
     )
     assert title_idx < preamble_idx < tail_idx
