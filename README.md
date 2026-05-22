@@ -4,7 +4,7 @@ Unattended execution of a Linear cycle. One invocation, no prompts; each issue r
 
 ## Why this exists
 
-Today, executing a Linear cycle is manual: launch Claude per issue, watch it run, approve permissions, update Linear, repeat. The user time that should go to *scoping the next cycle* and *validating delivered work* is consumed by execution shepherding. `drain-cycle` removes that shepherding for the common path so attention shifts back to scoping and validation. The full goal / KRs / kill condition live in the Linear project description.
+Today, executing a Linear cycle is manual: launch Claude per issue, watch it run, approve permissions, update Linear, repeat. This time that should go to *scoping the next cycle* and *validating delivered work* is consumed by execution shepherding. `drain-cycle` removes that shepherding for the common path so attention shifts back to scoping and validation. The full goal / KRs / kill condition live in the Linear project description.
 
 ## Is this for you?
 
@@ -31,7 +31,7 @@ pip install -e .                      # installs the `drain-cycle` CLI
 echo 'LINEAR_API_KEY=lin_api_…' > .env  # loaded automatically at CLI start
 ```
 
-`.env` lives at the drain-cycle repo root and is gitignored. The CLI resolves it via `__file__`, so the key is picked up no matter which target repo you run `drain-cycle` from. If you'd rather export `LINEAR_API_KEY` in your shell rc, that still works and takes precedence over `.env`.
+`.env` lives at the drain-cycle repo root and is gitignored, if you'd rather export `LINEAR_API_KEY` in your shell rc, that still works and takes precedence over `.env`.
 
 Verify the install:
 
@@ -99,13 +99,13 @@ After the run, the per-cycle JSON log is at `~/.drain-cycle/runs/<cycle-id>.json
 `drain-cycle` assumes the spawned `claude -p` sessions have access to whatever skills you've installed globally. The pairing it was designed for:
 
 - [**`ababushkin/pde-skills`**](https://github.com/ababushkin/pde-skills) — planning + engineering skill pack. Use it to *shape* the cycle (initiative, KRs, slices) before draining it. `drain-cycle` only multiplies execution; the quality of the cycle is upstream of this tool.
-- [**`addyosmani/agent-skills`**](https://github.com/addyosmani/agent-skills) — Addy Osmani's pack (referenced inside pde-skills) covers complementary build / test / review skills the spawned sessions lean on.
+- [**`addyosmani/agent-skills`**](https://github.com/addyosmani/agent-skills) — Addy Osmani's pack covers complementary build / test / review skills the spawned sessions lean on.
 
 Both are skill packs for Claude Code — install them globally and the spawned `claude -p` sessions will pick them up automatically.
 
 ## Logs & grading
 
-Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, and `halt_reason` on the halting entry. This is the artefact downstream grading (KR1 completion %, KR2 unattended duration, kill condition) reads — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
+Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, and `halt_reason` on the halting entry. You can use this to get some stats on how cleanly your executions are performing — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
 
 ## Design
 
