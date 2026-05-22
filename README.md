@@ -50,8 +50,6 @@ Drains the current cycle's Todo/Backlog issues (in priority order) until either 
 
 ### What a run looks like
 
-Below is a representative trace — invented for illustration; a recorded demo will replace it later. Every line is something `drain-cycle` actually prints today.
-
 ```bash
 $ cd ~/src/my-project
 $ drain-cycle
