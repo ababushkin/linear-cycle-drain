@@ -17,3 +17,6 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Atentic workflows
+docs/tasks
