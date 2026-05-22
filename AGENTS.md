@@ -6,7 +6,7 @@ Instructions for any coding agent (Claude Code, Codex, etc.) working in this rep
 
 `drain-cycle` is a CLI that picks up a well-scoped Linear cycle and executes its issues unattended, spawning a fresh `claude -p --dangerously-skip-permissions` session in an isolated worktree per issue. Python, single-user, personal product.
 
-The design rationale (decisions taken, alternatives considered, kill condition) lives in `README.md`. Read it before making architectural changes.
+The design rationale (decisions taken, alternatives considered, kill condition) lives in `docs/design-decisions.md`. Read it before making architectural changes.
 
 ## Linear workflow
 
