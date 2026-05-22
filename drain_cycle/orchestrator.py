@@ -42,6 +42,34 @@ def _halt_message(identifier: str, state_name: str, worktree_path: Path) -> str:
     return f"Halt: {identifier} (final state: {state_name}) at {worktree_path}"
 
 
+def _revert_to_pre_halt_state(
+    issue_id: str, *, target_state_name: str, pre_revert_state_name: str
+) -> tuple[str, str | None]:
+    """Restore Linear state on halt; return ``(state_to_report, error_msg)``.
+
+    The orchestrator transitions issues Todo→In Progress before spawning the
+    agent (ABA-209). When the run halts, that In-Progress flag leaves the
+    issue outside ``_PENDING_STATE_TYPES`` so a re-run silently skips it
+    (ABA-229). This helper reverses the transition and re-fetches to confirm.
+
+    On revert success, returns the refreshed state name and ``None``.
+    On revert failure, returns ``pre_revert_state_name`` (the state the
+    issue is actually still in, so the operator can find it) plus the
+    exception message — non-fatal per AC4. A failed refresh after a
+    successful revert falls back to ``target_state_name``, since we trust
+    the mutation landed even if the read-back didn't.
+    """
+    try:
+        linear.set_state(issue_id, target_state_name)
+    except Exception as exc:
+        return pre_revert_state_name, str(exc)
+    try:
+        refreshed = linear.get_issue(issue_id)
+    except Exception:
+        return target_state_name, None
+    return refreshed["state"]["name"], None
+
+
 def run() -> int:
     repo = Path.cwd()
     cycle_id = linear.current_cycle_id()
@@ -96,17 +124,26 @@ def run() -> int:
                 timeout=_ISSUE_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:
-            state_name = issue["state"]["name"]
+            original_state_name = issue["state"]["name"]
+            effective_state, revert_error = _revert_to_pre_halt_state(
+                issue["id"],
+                target_state_name=original_state_name,
+                pre_revert_state_name=_IN_PROGRESS_STATE_NAME,
+            )
             halt_reason = (
-                f"{_halt_message(identifier, state_name, worktree_path)}"
+                f"{_halt_message(identifier, effective_state, worktree_path)}"
                 f" — claude -p exceeded {_ISSUE_TIMEOUT_SECONDS:.0f}s timeout"
             )
+            if revert_error is not None:
+                halt_reason += (
+                    f"; revert to {original_state_name!r} failed: {revert_error}"
+                )
             log.append_entry(
                 issue_identifier=identifier,
                 started_at=started_at,
                 finished_at=_now_iso(),
                 exit_code=-1,
-                final_linear_state=state_name,
+                final_linear_state=effective_state,
                 worktree_path=str(worktree_path),
                 halt_reason=halt_reason,
             )
@@ -115,30 +152,48 @@ def run() -> int:
         finished_at = _now_iso()
 
         refreshed = linear.get_issue(issue["id"])
-        state_name = refreshed["state"]["name"]
+        post_spawn_state = refreshed["state"]["name"]
         is_done = refreshed["state"]["type"] == _DONE_STATE_TYPE
-        halt_reason = (
-            None if is_done else _halt_message(identifier, state_name, worktree_path)
+
+        if is_done:
+            # Append unconditionally for every attempted issue (ABA-216).
+            log.append_entry(
+                issue_identifier=identifier,
+                started_at=started_at,
+                finished_at=finished_at,
+                exit_code=result.returncode,
+                final_linear_state=post_spawn_state,
+                worktree_path=str(worktree_path),
+                halt_reason=None,
+            )
+            worktree.remove(repo, worktree_path)
+            print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
+            continue
+
+        # Not-Done halt: revert to the pre-halt state so a re-run picks
+        # this issue back up instead of silently skipping it (ABA-229).
+        original_state_name = issue["state"]["name"]
+        effective_state, revert_error = _revert_to_pre_halt_state(
+            issue["id"],
+            target_state_name=original_state_name,
+            pre_revert_state_name=post_spawn_state,
         )
-        # Append unconditionally for every attempted issue (ABA-216); the
-        # halt branch's `halt_reason` carries the same string also printed
-        # to stderr below so the on-disk and terminal surfaces cannot
-        # drift (ABA-213).
+        halt_reason = _halt_message(identifier, effective_state, worktree_path)
+        if revert_error is not None:
+            halt_reason += (
+                f" — revert to {original_state_name!r} failed: {revert_error}"
+            )
+        # halt_reason carries the same string also printed to stderr below
+        # so the on-disk and terminal surfaces cannot drift (ABA-213).
         log.append_entry(
             issue_identifier=identifier,
             started_at=started_at,
             finished_at=finished_at,
             exit_code=result.returncode,
-            final_linear_state=state_name,
+            final_linear_state=effective_state,
             worktree_path=str(worktree_path),
             halt_reason=halt_reason,
         )
-
-        if is_done:
-            worktree.remove(repo, worktree_path)
-            print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
-            continue
-
         print(halt_reason, file=sys.stderr)
         return 1
 

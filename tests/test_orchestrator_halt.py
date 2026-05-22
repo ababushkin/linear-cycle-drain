@@ -100,9 +100,11 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
     exit_code = orchestrator.run()
 
     assert exit_code != 0
-    # Only the first issue was ever re-fetched — the loop bailed before
-    # touching the second.
-    assert get_issue_calls == [first["id"]]
+    # Loop bailed before touching the second issue. The first id may be
+    # re-fetched more than once (initial refresh + post-revert refresh per
+    # ABA-229); the load-bearing invariant is the second issue is absent.
+    assert get_issue_calls
+    assert second["id"] not in get_issue_calls
     # Second issue's stub state is unchanged.
     assert second["state"] == {"type": "unstarted", "name": "Todo"}
     # First issue's worktree is still on disk for the operator to inspect.
@@ -343,13 +345,17 @@ def test_orchestrator_records_halt_when_claude_subprocess_times_out(
     def fake_pending_issues(cycle_id: str) -> list[dict]:
         return linear._sort_pending_issues(raw_issues)
 
-    def forbidden_get_issue(issue_id: str) -> dict:
-        raise AssertionError("get_issue called after timeout")
+    issues_by_id = {i["id"]: i for i in raw_issues}
+
+    def fake_get_issue(issue_id: str) -> dict:
+        # After ABA-229 the timeout halt path reverts state and refreshes
+        # — return the original Todo state so the refresh sees the revert.
+        return issues_by_id[issue_id]
 
     monkeypatch.setattr(linear, "current_cycle_id", fake_current_cycle_id)
     monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
     monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
-    monkeypatch.setattr(linear, "get_issue", forbidden_get_issue)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
 
     # Fake claude that sleeps longer than the test timeout so the real
     # ``subprocess.run(timeout=…)`` raises TimeoutExpired.
@@ -380,3 +386,348 @@ def test_orchestrator_records_halt_when_claude_subprocess_times_out(
     assert all(
         e["issue_identifier"] != second["identifier"] for e in payload["entries"]
     )
+
+
+def test_orchestrator_reverts_state_on_timeout_halt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ABA-229 AC1: on spawn-timeout halt, the orchestrator must revert the
+    issue's state back to the pre-halt state name captured from the cycle
+    query — so a re-run picks it up again rather than silently skipping
+    it (the ABA-227 silent-skip case).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    raw_issues = [first]
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    set_state_calls: list[tuple[str, str]] = []
+    # Tracks Linear-side state per issue so a successful revert is visible
+    # on the post-revert refresh.
+    live_states: dict[str, dict[str, str]] = {
+        first["id"]: first["state"].copy(),
+    }
+
+    def fake_set_state(issue_id: str, state_name: str) -> None:
+        set_state_calls.append((issue_id, state_name))
+        live_states[issue_id] = {
+            "type": "started" if state_name == "In Progress" else "unstarted",
+            "name": state_name,
+        }
+
+    def fake_get_issue(issue_id: str) -> dict:
+        return {**issues_by_id[issue_id], "state": live_states[issue_id]}
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
+    monkeypatch.setattr(
+        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+    )
+    monkeypatch.setattr(linear, "set_state", fake_set_state)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+
+    hanging_claude = tmp_path / "hanging-claude.sh"
+    hanging_claude.write_text("#!/bin/sh\nsleep 10\n")
+    hanging_claude.chmod(0o755)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(hanging_claude)])
+    monkeypatch.setattr(orchestrator, "_ISSUE_TIMEOUT_SECONDS", 0.3)
+
+    exit_code = orchestrator.run()
+    assert exit_code == 1
+
+    # Two set_state calls in pick order: In Progress (pre-spawn), then
+    # revert to the original "Todo" (post-halt).
+    assert set_state_calls == [
+        (first["id"], "In Progress"),
+        (first["id"], first["state"]["name"]),
+    ]
+    # Linear ends in the pre-halt state — what makes a re-run pick it up.
+    assert live_states[first["id"]]["name"] == first["state"]["name"]
+
+    # The halt entry's final_linear_state reflects the post-revert state
+    # observed via refresh, not the in-flight "In Progress".
+    runs_dir = tmp_path / ".drain-cycle" / "runs"
+    payload = json.loads(next(runs_dir.glob("stub-cycle-id-*.json")).read_text())
+    entry = payload["entries"][0]
+    assert entry["final_linear_state"] == first["state"]["name"]
+
+    # Same string lands on stderr (US-B / ABA-213 invariant).
+    stderr_lines = capsys.readouterr().err.splitlines()
+    (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
+    assert entry["halt_reason"] == halt_line
+    assert first["state"]["name"] in halt_line
+
+
+def test_orchestrator_reverts_state_on_post_spawn_not_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ABA-229 AC2: when the agent exits without flipping to Done — leaving
+    the issue in "In Progress" (the ABA-227 case) — the orchestrator must
+    revert to the original Todo/Backlog state and the run-log records the
+    reverted state.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    raw_issues = [first]
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    set_state_calls: list[tuple[str, str]] = []
+    live_states: dict[str, dict[str, str]] = {
+        first["id"]: first["state"].copy(),
+    }
+
+    def fake_set_state(issue_id: str, state_name: str) -> None:
+        set_state_calls.append((issue_id, state_name))
+        live_states[issue_id] = {
+            "type": "started" if state_name == "In Progress" else "unstarted",
+            "name": state_name,
+        }
+
+    def fake_get_issue(issue_id: str) -> dict:
+        return {**issues_by_id[issue_id], "state": live_states[issue_id]}
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
+    monkeypatch.setattr(
+        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+    )
+    monkeypatch.setattr(linear, "set_state", fake_set_state)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+
+    # Fake claude exits cleanly without flipping state — same poison-pill
+    # shape as ABA-227.
+    fake_claude = _write_fake_claude_script(tmp_path)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    exit_code = orchestrator.run()
+    assert exit_code == 1
+
+    assert set_state_calls == [
+        (first["id"], "In Progress"),
+        (first["id"], first["state"]["name"]),
+    ]
+    assert live_states[first["id"]]["name"] == first["state"]["name"]
+
+    runs_dir = tmp_path / ".drain-cycle" / "runs"
+    payload = json.loads(next(runs_dir.glob("stub-cycle-id-*.json")).read_text())
+    entry = payload["entries"][0]
+    assert entry["final_linear_state"] == first["state"]["name"]
+
+    stderr_lines = capsys.readouterr().err.splitlines()
+    (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
+    assert entry["halt_reason"] == halt_line
+
+
+def test_orchestrator_halt_records_revert_failure_non_fatally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ABA-229 AC4: if the revert ``set_state`` call raises, the orchestrator
+    still exits 1 with a halt entry written. The halt-reason explicitly
+    notes the revert failure so the operator can fix the state by hand,
+    and no traceback escapes.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    raw_issues = [first]
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    set_state_calls: list[tuple[str, str]] = []
+    revert_error_message = "Linear unavailable during revert"
+
+    def fake_set_state(issue_id: str, state_name: str) -> None:
+        set_state_calls.append((issue_id, state_name))
+        # First call (Todo → In Progress) succeeds; second call (revert)
+        # raises to simulate a Linear outage at exactly the wrong moment.
+        if len(set_state_calls) >= 2:
+            raise RuntimeError(revert_error_message)
+
+    def fake_get_issue(issue_id: str) -> dict:
+        # Agent left the issue in In Progress — the case that motivated
+        # ABA-229. Revert will be attempted but will fail.
+        return {
+            **issues_by_id[issue_id],
+            "state": {"type": "started", "name": "In Progress"},
+        }
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
+    monkeypatch.setattr(
+        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+    )
+    monkeypatch.setattr(linear, "set_state", fake_set_state)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+
+    fake_claude = _write_fake_claude_script(tmp_path)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    exit_code = orchestrator.run()
+    assert exit_code == 1
+
+    # Revert was attempted: In Progress (pre-spawn) and then the failing
+    # revert call targeting the original state.
+    assert set_state_calls == [
+        (first["id"], "In Progress"),
+        (first["id"], first["state"]["name"]),
+    ]
+
+    runs_dir = tmp_path / ".drain-cycle" / "runs"
+    payload = json.loads(next(runs_dir.glob("stub-cycle-id-*.json")).read_text())
+    assert len(payload["entries"]) == 1
+    entry = payload["entries"][0]
+    assert entry["issue_identifier"] == first["identifier"]
+
+    # Halt-reason on stderr and in the runlog explicitly surfaces the
+    # revert failure so the operator knows the state needs hand-fixing.
+    stderr_lines = capsys.readouterr().err.splitlines()
+    (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
+    assert entry["halt_reason"] == halt_line
+    assert "revert" in halt_line.lower()
+    assert revert_error_message in halt_line
+    # No traceback escaped onto stderr.
+    assert not any("Traceback" in line for line in stderr_lines)
+
+
+def test_orchestrator_setup_failure_does_not_attempt_revert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ABA-229 AC3: pre-spawn setup-failure path is unchanged — when
+    ``worktree.add`` or the initial ``linear.set_state`` itself raised,
+    no revert is needed because the state never moved. This pins the
+    "only one set_state call observed" invariant.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    raw_issues = [first]
+    set_state_calls: list[tuple[str, str]] = []
+
+    def failing_set_state(issue_id: str, state_name: str) -> None:
+        set_state_calls.append((issue_id, state_name))
+        raise RuntimeError("Linear outage simulated")
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
+    monkeypatch.setattr(
+        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+    )
+    monkeypatch.setattr(linear, "set_state", failing_set_state)
+    monkeypatch.setattr(
+        linear,
+        "get_issue",
+        lambda issue_id: (_ for _ in ()).throw(AssertionError("get_issue called")),
+    )
+
+    forbidden_claude = tmp_path / "forbidden-claude.sh"
+    forbidden_claude.write_text("#!/bin/sh\nexit 99\n")
+    forbidden_claude.chmod(0o755)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(forbidden_claude)])
+
+    exit_code = orchestrator.run()
+    assert exit_code == 1
+    # Exactly one set_state call — the failed pre-spawn In Progress
+    # transition. No revert attempt follows, because the state never moved.
+    assert set_state_calls == [(first["id"], "In Progress")]
+
+
+def test_orchestrator_rerun_after_halt_picks_up_same_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ABA-229 AC5: after a halted run that successfully reverts state, a
+    second ``orchestrator.run()`` invocation against the same cycle picks
+    up the previously-halted issue first — because the revert restored
+    it to a ``_PENDING_STATE_TYPES`` value and the existing sort key
+    preserves its priority position.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    raw_issues = [first, second]
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    live_states: dict[str, dict[str, str]] = {
+        i["id"]: i["state"].copy() for i in raw_issues
+    }
+    picked_first: list[str] = []
+
+    def fake_set_state(issue_id: str, state_name: str) -> None:
+        live_states[issue_id] = {
+            "type": "started" if state_name == "In Progress" else "unstarted",
+            "name": state_name,
+        }
+
+    def fake_pending_issues(cycle_id: str) -> list[dict]:
+        # Mirror the real filter: only Backlog/Todo (unstarted) come back.
+        return linear._sort_pending_issues(
+            [
+                {**issues_by_id[i["id"]], "state": live_states[i["id"]]}
+                for i in raw_issues
+                if live_states[i["id"]]["type"] in ("backlog", "unstarted")
+            ]
+        )
+
+    def fake_get_issue(issue_id: str) -> dict:
+        return {**issues_by_id[issue_id], "state": live_states[issue_id]}
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
+    monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
+    monkeypatch.setattr(linear, "set_state", fake_set_state)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+
+    # Capture the first-picked identifier per run. The fake records it on
+    # invocation (when cwd == the worktree for the picked issue), then
+    # exits without flipping state — halting the run.
+    trace = tmp_path / "picked.log"
+    fake_claude = tmp_path / "fake-claude.sh"
+    fake_claude.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$(basename "$PWD")" >> "{trace}"\n'
+        "exit 0\n"
+    )
+    fake_claude.chmod(0o755)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    first_run_exit = orchestrator.run()
+    assert first_run_exit == 1
+    # State reverted to Todo so a re-run can rediscover it.
+    assert live_states[first["id"]]["name"] == first["state"]["name"]
+
+    # Remove the halted worktree so the second run can recreate one for
+    # the same issue (git worktree add fails if the directory exists).
+    halted_worktree = repo / ".worktrees" / first["identifier"]
+    if halted_worktree.is_dir():
+        import shutil
+        shutil.rmtree(halted_worktree)
+    subprocess.run(
+        ["git", "worktree", "prune"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "branch", "-D", first["identifier"]],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+    )
+
+    second_run_exit = orchestrator.run()
+    assert second_run_exit == 1
+
+    picked = trace.read_text().splitlines()
+    # First pick on each run is the same identifier — the previously
+    # halted issue, not the lower-priority second issue.
+    assert picked[0] == first["identifier"]
+    assert picked[1] == first["identifier"]
