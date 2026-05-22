@@ -57,6 +57,7 @@ def test_orchestrator_transitions_to_in_progress_before_each_spawn(
     repo.mkdir()
     _init_repo(repo)
     monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
     second = _issue("ABA-SECOND", priority=2, sort_order=2.0)

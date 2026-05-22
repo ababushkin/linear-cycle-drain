@@ -66,6 +66,7 @@ def test_orchestrator_drains_every_issue_in_sorted_order(
     repo.mkdir()
     _init_repo(repo)
     monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     # Three issues — chosen so a "naïve" iteration order (input order) and
     # the priority sort disagree, proving the loop consumes the *sorted*

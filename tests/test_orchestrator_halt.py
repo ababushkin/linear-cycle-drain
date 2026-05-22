@@ -55,6 +55,7 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
     repo.mkdir()
     _init_repo(repo)
     monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     # Two issues; the first will be picked, the spawn will exit without
     # marking it Done. The second must remain untouched.
