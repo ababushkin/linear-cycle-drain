@@ -20,10 +20,23 @@ from . import grade, orchestrator
 
 _REPO_ENV = Path(__file__).resolve().parent.parent / ".env"
 
+_USAGE = (
+    "usage: drain-cycle              drain the current Linear cycle\n"
+    "       drain-cycle grade        print health read from run logs\n"
+    "       drain-cycle --help"
+)
+
 
 def main() -> None:
     load_dotenv(_REPO_ENV)
     argv = sys.argv[1:]
-    if argv and argv[0] == "grade":
+    if not argv:
+        sys.exit(orchestrator.run())
+    if argv == ["grade"]:
         sys.exit(grade.run(grade.default_runs_dir()))
-    sys.exit(orchestrator.run())
+    if argv in (["-h"], ["--help"]):
+        print(_USAGE)
+        sys.exit(0)
+    print(f"drain-cycle: unknown invocation: {' '.join(argv)}", file=sys.stderr)
+    print(_USAGE, file=sys.stderr)
+    sys.exit(2)
