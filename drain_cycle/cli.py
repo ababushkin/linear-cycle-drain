@@ -1,7 +1,8 @@
 """``drain-cycle`` CLI entry point.
 
 Zero-arg invocation per US-A: cwd is the target repo, all behaviour is
-implicit from the current Linear cycle.
+implicit from the current Linear cycle. The ``grade`` subcommand
+(US-D / ABA-197) reads the run logs and prints a health read.
 
 Loads ``.env`` from the drain-cycle repo root before any module reads
 ``os.environ`` — the CLI is run from arbitrary target-repo cwds, so the
@@ -15,11 +16,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .orchestrator import run
+from . import grade, orchestrator
 
 _REPO_ENV = Path(__file__).resolve().parent.parent / ".env"
 
 
 def main() -> None:
     load_dotenv(_REPO_ENV)
-    sys.exit(run())
+    argv = sys.argv[1:]
+    if argv and argv[0] == "grade":
+        sys.exit(grade.run(grade.default_runs_dir()))
+    sys.exit(orchestrator.run())
