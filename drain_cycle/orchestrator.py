@@ -49,14 +49,39 @@ def run() -> int:
         identifier = issue["identifier"]
         print(f"drain-cycle: picked {identifier}: {issue['title']}", file=sys.stderr)
 
-        worktree_path = worktree.add(repo, identifier)
-        # Orchestrator owns the Todo→In Progress half so the lifecycle doesn't
-        # depend on the spawned agent's compliance (ABA-209). The agent still
-        # owns the …→Done half via Linear MCP — see prompt.py tail.
-        linear.set_state(issue["id"], _IN_PROGRESS_STATE_NAME)
+        started_at = _now_iso()
+        try:
+            worktree_path = worktree.add(repo, identifier)
+            # Orchestrator owns the Todo→In Progress half so the lifecycle
+            # doesn't depend on the spawned agent's compliance (ABA-209). The
+            # agent still owns the …→Done half via Linear MCP — see prompt.py
+            # tail.
+            linear.set_state(issue["id"], _IN_PROGRESS_STATE_NAME)
+        except Exception as exc:
+            # Convert any pre-spawn failure into a recorded halt rather than
+            # a traceback: write a run-log entry with the planned worktree
+            # path, print the halt message, exit non-zero. Subsequent issues
+            # are not attempted — same contract as a spawn-time halt.
+            planned_path = repo / worktree.WORKTREE_DIR / identifier
+            state_name = issue["state"]["name"]
+            halt_reason = (
+                f"{_halt_message(identifier, state_name, planned_path)}"
+                f" — setup failed: {exc}"
+            )
+            log.append_entry(
+                issue_identifier=identifier,
+                started_at=started_at,
+                finished_at=_now_iso(),
+                exit_code=-1,
+                final_linear_state=state_name,
+                worktree_path=str(planned_path),
+                halt_reason=halt_reason,
+            )
+            print(halt_reason, file=sys.stderr)
+            return 1
+
         agent_prompt = prompt.build(issue, worktree_path)
 
-        started_at = _now_iso()
         result = subprocess.run(
             [*_CLAUDE_CMD, agent_prompt],
             cwd=worktree_path,

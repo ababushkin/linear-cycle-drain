@@ -244,3 +244,76 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
 
     # Halted worktree preserved (existing ABA-202 contract).
     assert (repo / ".worktrees" / first["identifier"]).is_dir()
+
+
+def test_orchestrator_records_halt_when_setup_raises_before_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pre-spawn failure (e.g. Linear outage during ``set_state``) must
+    convert to a recorded halt — run-log entry + Halt: stderr line + exit 1
+    — instead of an uncaught traceback. Without this, the orchestrator
+    crashes mid-cycle and the runlog is missing the attempted entry, so
+    KR1 grading sees a phantom-zero rather than a halt.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    raw_issues = [first, second]
+
+    def fake_current_cycle_id() -> str:
+        return "stub-cycle-id"
+
+    def fake_pending_issues(cycle_id: str) -> list[dict]:
+        return linear._sort_pending_issues(raw_issues)
+
+    def failing_set_state(issue_id: str, state_name: str) -> None:
+        raise RuntimeError("Linear outage simulated")
+
+    # get_issue must never be called — the orchestrator should halt before
+    # the spawn, so there's no post-spawn state refresh.
+    def forbidden_get_issue(issue_id: str) -> dict:
+        raise AssertionError("get_issue called after setup failure")
+
+    monkeypatch.setattr(linear, "current_cycle_id", fake_current_cycle_id)
+    monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
+    monkeypatch.setattr(linear, "set_state", failing_set_state)
+    monkeypatch.setattr(linear, "get_issue", forbidden_get_issue)
+
+    # Claude must never be spawned either — the failure is before spawn.
+    forbidden_claude = tmp_path / "forbidden-claude.sh"
+    forbidden_claude.write_text("#!/bin/sh\nexit 99\n")
+    forbidden_claude.chmod(0o755)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(forbidden_claude)])
+
+    exit_code = orchestrator.run()
+    assert exit_code == 1
+
+    runs_dir = tmp_path / ".drain-cycle" / "runs"
+    log_files = list(runs_dir.glob("stub-cycle-id-*.json"))
+    assert len(log_files) == 1
+    payload = json.loads(log_files[0].read_text())
+
+    # One entry recorded for the failing-setup issue; second issue absent.
+    assert len(payload["entries"]) == 1
+    entry = payload["entries"][0]
+    assert entry["issue_identifier"] == first["identifier"]
+    # Final Linear state is the pre-failure state — set_state never landed.
+    assert entry["final_linear_state"] == first["state"]["name"]
+    # halt_reason carries the same string emitted to stderr (US-B / ABA-213).
+    stderr_lines = capsys.readouterr().err.splitlines()
+    (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
+    assert entry["halt_reason"] == halt_line
+    # The halt message surfaces the underlying exception so the operator
+    # can diagnose without re-reading a stack trace.
+    assert "Linear outage simulated" in halt_line
+    assert "setup failed" in halt_line
+
+    # Second issue never attempted — same contract as a spawn-time halt.
+    assert all(
+        e["issue_identifier"] != second["identifier"] for e in payload["entries"]
+    )
