@@ -1,7 +1,8 @@
 """Verdict-section tests for ``drain-cycle grade`` (Task 4 / ABA-221).
 
-Pins the OK / WATCH / KILL banding and the operator-judgement reminder
-on the KILL path.
+Pins the HEALTHY / WATCH / CONCERNING banding per ABA-197 acceptance.
+No project-specific reminders are baked into the output (ABA-197
+out-of-scope clause).
 """
 from __future__ import annotations
 
@@ -53,21 +54,20 @@ def _verdict_section(out: str) -> str:
 
 
 @pytest.mark.parametrize(
-    ("done", "halted", "expected_percent", "expected_label", "kill_reminder"),
+    ("done", "halted", "expected_percent", "expected_label"),
     [
-        (17, 3, 85, "OK", False),     # 17/20 = 85%
-        (13, 7, 65, "WATCH", False),  # 13/20 = 65%
-        (3, 7, 30, "KILL", True),     # 3/10 = 30%
+        (17, 3, 85, "HEALTHY"),      # 17/20 = 85%
+        (13, 7, 65, "WATCH"),         # 13/20 = 65%
+        (3, 7, 30, "CONCERNING"),     # 3/10 = 30%
     ],
 )
-def test_verdict_label_and_reminder_match_band(
+def test_verdict_label_matches_band(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     done: int,
     halted: int,
     expected_percent: int,
     expected_label: str,
-    kill_reminder: bool,
 ) -> None:
     runs_dir = tmp_path / "runs"
     _write_cycle(
@@ -87,12 +87,34 @@ def test_verdict_label_and_reminder_match_band(
     assert expected_label in verdict
     assert f"{expected_percent}%" in verdict
     # No cross-contamination — the other two band labels are absent.
-    other_labels = {"OK", "WATCH", "KILL"} - {expected_label}
+    other_labels = {"HEALTHY", "WATCH", "CONCERNING"} - {expected_label}
     for other in other_labels:
         assert other not in verdict
 
-    reminder_present = "addressable within one cycle of fixes" in verdict
-    assert reminder_present is kill_reminder
+
+def test_verdict_output_carries_no_project_specific_reminder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ABA-197 out-of-scope clause: project-specific kill-condition strings
+    or reminders must not be baked into the CLI output. The verdict is a
+    general health band; interpretation belongs to the operator."""
+    runs_dir = tmp_path / "runs"
+    _write_cycle(
+        runs_dir,
+        cycle_id="cycle-failing",
+        timestamp="20260522T100000000000Z",
+        done=0,
+        halted=5,
+    )
+
+    exit_code = grade.run(runs_dir)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    verdict = _verdict_section(captured.out)
+    assert "kill condition" not in verdict.lower()
+    assert "addressable within one cycle" not in verdict.lower()
+    assert "reminder" not in verdict.lower()
 
 
 def test_verdict_uses_most_recent_cycle_not_earlier_ones(
@@ -100,7 +122,7 @@ def test_verdict_uses_most_recent_cycle_not_earlier_ones(
 ) -> None:
     """The most-recent cycle (last in chronological order) drives the verdict."""
     runs_dir = tmp_path / "runs"
-    # Earlier cycle: 100% Done — would say OK on its own.
+    # Earlier cycle: 100% Done — would say HEALTHY on its own.
     _write_cycle(
         runs_dir,
         cycle_id="cycle-earlier",
@@ -108,7 +130,7 @@ def test_verdict_uses_most_recent_cycle_not_earlier_ones(
         done=5,
         halted=0,
     )
-    # Most recent: 0/5 → KILL must win.
+    # Most recent: 0/5 → CONCERNING must win.
     _write_cycle(
         runs_dir,
         cycle_id="cycle-most-recent",
@@ -122,8 +144,8 @@ def test_verdict_uses_most_recent_cycle_not_earlier_ones(
     captured = capsys.readouterr()
     assert exit_code == 0
     verdict = _verdict_section(captured.out)
-    assert "KILL" in verdict
-    assert "OK" not in verdict
+    assert "CONCERNING" in verdict
+    assert "HEALTHY" not in verdict
     assert "WATCH" not in verdict
 
 

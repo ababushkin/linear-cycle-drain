@@ -9,11 +9,12 @@ emits a human-readable health read:
 2. Across-cycles section (Task 3 / ABA-220): trend label over the last
    ``_TREND_WINDOW`` cycles + recurrent ``(final_linear_state,
    exit_code)`` tuples appearing in ≥2 of those cycles.
-3. Verdict section (Task 4 / ABA-221): one of ``OK`` / ``WATCH`` /
-   ``KILL`` against the most-recent cycle's completion %. KILL prints
-   a reminder that the second clause of the project's kill condition
-   ("not addressable within one cycle of fixes") is operator
-   judgement, not machine-evaluated.
+3. Verdict section (Task 4 / ABA-221): one of ``HEALTHY`` / ``WATCH``
+   / ``CONCERNING`` against the most-recent cycle's completion %.
+   Labels are general health bands per ABA-197 — the operator
+   interprets them against whatever kill / continuation rule they hold
+   for the work being drained. No project-specific reminders are baked
+   into the tool (ABA-197 out-of-scope clause).
 
 Run logs are grouped by ``cycle_id`` because one cycle can produce
 multiple files when ``drain-cycle`` is re-run against the same cycle
@@ -35,15 +36,10 @@ _TREND_WINDOW = 3
 """Number of most-recent cycles considered by the trend + recurrent-tuple
 analysis (Task 3 / ABA-220). Pinned here; not configurable by the CLI."""
 
-_OK_THRESHOLD = 80
+_HEALTHY_THRESHOLD = 80
 _WATCH_THRESHOLD = 50
-"""Verdict bands (Task 4 / ABA-221). Boundaries are inclusive on the
-lower edge: ≥80 → OK, 50–79 → WATCH, <50 → KILL."""
-
-_KILL_SECOND_CLAUSE = (
-    "Reminder: the second clause of the kill condition — \"not addressable "
-    "within one cycle of fixes\" — is operator judgement, not machine-evaluated."
-)
+"""Verdict bands per ABA-197 acceptance. Boundaries are inclusive on the
+lower edge: ≥80 → HEALTHY, 50–79 → WATCH, <50 → CONCERNING."""
 
 
 def default_runs_dir() -> Path:
@@ -150,16 +146,13 @@ def _render_across_cycles(cycles: list[_Cycle]) -> str:
 def _render_verdict(cycles: list[_Cycle]) -> str:
     most_recent = cycles[-1]
     pct = most_recent.completion_percent
-    if pct >= _OK_THRESHOLD:
-        label = "OK"
+    if pct >= _HEALTHY_THRESHOLD:
+        label = "HEALTHY"
     elif pct >= _WATCH_THRESHOLD:
         label = "WATCH"
     else:
-        label = "KILL"
-    lines = [f"verdict: {label} (most-recent cycle completion: {pct}%)"]
-    if label == "KILL":
-        lines.append(_KILL_SECOND_CLAUSE)
-    return "\n".join(lines)
+        label = "CONCERNING"
+    return f"verdict: {label} (most-recent cycle completion: {pct}%)"
 
 
 def _render_per_cycle(cycle: _Cycle) -> str:
