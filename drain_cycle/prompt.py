@@ -13,7 +13,11 @@ from pathlib import Path
 from typing import Any
 
 
-_TAIL = "when complete, move this issue to Done via Linear MCP"
+_TAIL = (
+    "before marking Done: run /code-review-and-quality on the working-tree "
+    "changes, fix Critical/Required findings, commit + push, then post a "
+    "review-summary comment on the issue and transition to Done."
+)
 
 
 def build(issue: dict[str, Any], worktree: Path) -> str:
@@ -26,9 +30,17 @@ def build(issue: dict[str, Any], worktree: Path) -> str:
         "Execution instructions:\n"
         f"- Working directory: {worktree}\n"
         "- Base branch: main\n"
-        f"- When done, transition issue {identifier} to Done in Linear via "
-        "the Linear MCP server (`mcp__claude_ai_Linear__save_issue` with "
-        'state: "Done").\n'
+        f"- Completion sequence for issue {identifier} (run in this order, "
+        "before marking Done):\n"
+        "  1. Run `/code-review-and-quality` against the working-tree changes.\n"
+        "  2. Fix any Critical or Required findings. Lower-severity findings "
+        "are at your discretion.\n"
+        "  3. Commit and push to main.\n"
+        "  4. Post a short review-summary comment on the Linear issue via "
+        "`mcp__claude_ai_Linear__save_comment` (count of findings by severity, "
+        "fixed vs deferred).\n"
+        "  5. Transition issue to Done via `mcp__claude_ai_Linear__save_issue` "
+        '(state: "Done").\n'
     )
 
     return (

@@ -20,9 +20,15 @@ Linear is authoritative for status. Local task lists are fine for within-session
 - Move to **In Progress** via `mcp__linear-server__save_issue`.
 - If the issue isn't yet in the current cycle and you intend to ship it this cycle, assign it to the current cycle.
 
-**On completion:**
-- Move to **Done** only after the work is committed AND pushed to main. An issue isn't Done if the work only exists locally. (This repo pushes directly to main; PRs only when the owner asks.)
-- Status updates happen at the moment of state change — not batched at end of session.
+**On completion:** Before an issue moves to **Done**, all of these must pass in order:
+
+1. **Review** — Run `/code-review-and-quality` against the working-tree changes.
+2. **Fix** — Address any Critical or Required findings. Lower-severity findings are at the agent's discretion (fix or note in the summary comment).
+3. **Commit + push** — Commit the reviewed version and push to main. (This repo pushes directly to main; PRs only when the owner asks.) An issue isn't Done if work only exists locally.
+4. **Summary comment** — Post a short comment on the Linear issue via `mcp__claude_ai_Linear__save_comment` with the review summary (count of findings by severity, plus what was fixed vs deferred).
+5. **Done** — Transition to Done via `mcp__claude_ai_Linear__save_issue`.
+
+Status updates happen at the moment of state change — not batched at end of session.
 
 **Blocked** = leave In Progress + add a blocker comment naming the blocker. Don't silently park work.
 
