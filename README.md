@@ -6,6 +6,17 @@ Unattended execution of a Linear cycle. One invocation, no prompts; each issue r
 
 Today, executing a Linear cycle is manual: launch Claude per issue, watch it run, approve permissions, update Linear, repeat. The user time that should go to *scoping the next cycle* and *validating delivered work* is consumed by execution shepherding. `drain-cycle` removes that shepherding for the common path so attention shifts back to scoping and validation. The full goal / KRs / kill condition live in the Linear project description.
 
+## Usage
+
+```
+cd /path/to/target-repo
+drain-cycle
+```
+
+Drains the current cycle's Todo/Backlog issues (in priority order) until either the cycle is empty (exit 0) or an issue halts.
+
+Run logs land at `~/.drain-cycle/runs/<cycle-id>.json` for self-grading via `drain-cycle grade`.
+
 ## Design decisions
 
 Three decisions are recorded here so a future reader doesn't have to reverse-engineer them from the code. ADRs would be heavier than this tool needs.
@@ -39,14 +50,3 @@ Each issue gets `.worktrees/<issue-identifier>/` branched off `main`, used once,
 - **Parallelism.** Issues run one at a time. The Linear cycle is the unit; intra-cycle parallelism adds resource contention and serialises poorly with the agent-self-update pattern (two agents racing to mark different issues Done is fine, but two agents racing on overlapping files is not).
 - **Retry.** A halted issue is not retried automatically. The operator inspects the worktree and decides — fix, redo manually, or descope.
 - **Cross-cycle scheduling.** One cycle per invocation. Chaining cycles is an operator concern.
-
-## Usage
-
-```
-cd /path/to/target-repo
-drain-cycle
-```
-
-Drains the current cycle's Todo/Backlog issues (in priority order) until either the cycle is empty (exit 0) or an issue halts.
-
-Run logs land at `~/.drain-cycle/runs/<cycle-id>.json` for self-grading via `drain-cycle grade`.
