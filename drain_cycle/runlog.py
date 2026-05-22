@@ -1,12 +1,17 @@
 """Per-cycle run-log artefact (US-C / ABA-196).
 
 Each ``drain-cycle`` invocation produces a single JSON file at
-``~/.drain-cycle/runs/<cycle-id>.json`` capturing one entry per attempted
-issue. The file is the input every downstream consumer reads:
+``~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`` capturing one
+entry per attempted issue. The filename embeds the run-start timestamp
+(UTC, ``%Y%m%dT%H%M%S%fZ``) so re-running ``drain-cycle`` against the
+same cycle writes a new file instead of clobbering the prior one
+(ABA-230). Downstream consumers glob the directory and group by
+``cycle_id`` (carried inside each file).
 
-* KR1 (completion %) is computed from ``entries[].final_linear_state``.
-* US-D (cycle-drain self-grading) reads the same file across cycles.
-* The kill condition (KR1 < 50%) is a one-file grep.
+* KR1 (completion %) is computed from ``entries[].final_linear_state``
+  merged across every file sharing the same ``cycle_id``.
+* US-D (cycle-drain self-grading) reads every file across cycles.
+* The kill condition (KR1 < 50%) merges per-cycle then thresholds.
 
 Schema:
 
@@ -54,7 +59,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +82,11 @@ class RunLog:
     cycle (or a crash before the first ``append_entry``) leaves the
     artefact on disk, which is what US-D / kill-condition tooling needs
     to distinguish "drained nothing" from "never ran".
+
+    The filename embeds a UTC run-start timestamp with microsecond
+    resolution, so two ``RunLog`` instances on the same ``cycle_id``
+    (re-running ``drain-cycle`` after a halt) write to two separate
+    files instead of one clobbering the other (ABA-230).
     """
 
     cycle_id: str
@@ -86,7 +96,9 @@ class RunLog:
     def __post_init__(self) -> None:
         directory = runs_dir()
         directory.mkdir(parents=True, exist_ok=True)
-        self.path = directory / f"{self.cycle_id}.json"
+        run_started_at = datetime.now(tz=timezone.utc)
+        timestamp = run_started_at.strftime("%Y%m%dT%H%M%S%fZ")
+        self.path = directory / f"{self.cycle_id}-{timestamp}.json"
         self._persist()
 
     def append_entry(

@@ -91,8 +91,12 @@ def test_orchestrator_writes_runlog_with_one_entry_per_successful_issue(
     exit_code = orchestrator.run()
     assert exit_code == 0
 
-    log_path = tmp_path / ".drain-cycle" / "runs" / "stub-cycle-id.json"
-    assert log_path.is_file()
+    # Per-run filename (ABA-230): one file per drain-cycle invocation,
+    # ``<cycle-id>-<run-timestamp>.json`` — glob to locate it.
+    runs_dir = tmp_path / ".drain-cycle" / "runs"
+    log_files = list(runs_dir.glob("stub-cycle-id-*.json"))
+    assert len(log_files) == 1
+    log_path = log_files[0]
     payload = json.loads(log_path.read_text())
 
     assert payload["cycle_id"] == "stub-cycle-id"

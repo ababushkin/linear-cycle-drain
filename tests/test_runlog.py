@@ -23,10 +23,16 @@ def test_runlog_initialises_file_with_empty_entries_and_zero_duration(
 
     log = runlog.RunLog(cycle_id="stub-cycle")
 
-    expected_path = tmp_path / ".drain-cycle" / "runs" / "stub-cycle.json"
-    assert log.path == expected_path
-    assert expected_path.is_file()
-    payload = json.loads(expected_path.read_text())
+    runs_dir = tmp_path / ".drain-cycle" / "runs"
+    # Filename is ``<cycle-id>-<run-timestamp>.json`` (ABA-230) — one file
+    # per drain-cycle invocation, no clobber on re-run.
+    assert log.path.parent == runs_dir
+    assert log.path.name.startswith("stub-cycle-")
+    assert log.path.suffix == ".json"
+    assert log.path.is_file()
+    files = list(runs_dir.glob("stub-cycle-*.json"))
+    assert files == [log.path]
+    payload = json.loads(log.path.read_text())
     assert payload == {
         "cycle_id": "stub-cycle",
         "cycle_duration_seconds": 0.0,
@@ -107,3 +113,56 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
     # The raw JSON text carries `null` (not "null"), so consumers that
     # treat the string "null" specially are not misled.
     assert '"halt_reason": null' in log.path.read_text()
+
+
+def test_two_runlogs_same_cycle_id_write_to_distinct_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ABA-230 regression pin.
+
+    Re-running ``drain-cycle`` against the same cycle (after fixing the
+    cause of a mid-cycle halt) used to clobber the first run's on-disk
+    artefact, silently losing every entry. With per-run filenames
+    (``<cycle-id>-<run-timestamp>.json``), both runs survive on disk and
+    downstream readers (US-D / ABA-197) can merge across them by
+    grouping on ``cycle_id``.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    first = runlog.RunLog(cycle_id="re-run-cycle")
+    first.append_entry(
+        issue_identifier="ABA-1",
+        started_at="2026-05-22T10:00:00+00:00",
+        finished_at="2026-05-22T10:01:00+00:00",
+        exit_code=0,
+        final_linear_state="Done",
+        worktree_path="/tmp/repo/.worktrees/ABA-1",
+    )
+
+    second = runlog.RunLog(cycle_id="re-run-cycle")
+    second.append_entry(
+        issue_identifier="ABA-2",
+        started_at="2026-05-22T11:00:00+00:00",
+        finished_at="2026-05-22T11:02:00+00:00",
+        exit_code=0,
+        final_linear_state="Done",
+        worktree_path="/tmp/repo/.worktrees/ABA-2",
+    )
+
+    assert first.path != second.path
+
+    runs_dir = tmp_path / ".drain-cycle" / "runs"
+    on_disk = sorted(p.name for p in runs_dir.glob("re-run-cycle-*.json"))
+    assert len(on_disk) == 2
+
+    # First run's data survived — not clobbered by the second construction.
+    first_payload = json.loads(first.path.read_text())
+    assert [e["issue_identifier"] for e in first_payload["entries"]] == ["ABA-1"]
+
+    # Second run's file carries only its own entry.
+    second_payload = json.loads(second.path.read_text())
+    assert [e["issue_identifier"] for e in second_payload["entries"]] == ["ABA-2"]
+
+    # Both files share the cycle_id, so a downstream merger can group
+    # them without reading the filename.
+    assert first_payload["cycle_id"] == second_payload["cycle_id"] == "re-run-cycle"
