@@ -37,19 +37,16 @@ Each issue gets `.worktrees/<issue-identifier>/` branched off `main`, used once,
 ## Out of scope (deliberate)
 
 - **Parallelism.** Issues run one at a time. The Linear cycle is the unit; intra-cycle parallelism adds resource contention and serialises poorly with the agent-self-update pattern (two agents racing to mark different issues Done is fine, but two agents racing on overlapping files is not).
-- **Retry.** A halted issue is not retried automatically. The operator inspects the worktree (US-B) and decides — fix, redo manually, or descope.
+- **Retry.** A halted issue is not retried automatically. The operator inspects the worktree and decides — fix, redo manually, or descope.
 - **Cross-cycle scheduling.** One cycle per invocation. Chaining cycles is an operator concern.
-- **Time tracking by the tool.** KR2's `time_spent` block is recorded by the operator at cycle close, not measured by the tool. The tool has no honest signal on whether the freed time went to scoping, validation, or something else entirely.
 
 ## Usage
-
-Not yet implemented. Once US-A lands:
 
 ```
 cd /path/to/target-repo
 drain-cycle
 ```
 
-Drains the current cycle's Todo/Backlog issues (in priority order) until either the cycle is empty (exit 0) or an issue halts (US-B: exit non-zero with halt message).
+Drains the current cycle's Todo/Backlog issues (in priority order) until either the cycle is empty (exit 0) or an issue halts.
 
-Run logs land at `~/.drain-cycle/runs/<cycle-id>.json` for self-grading via `drain-cycle grade` (US-D).
+Run logs land at `~/.drain-cycle/runs/<cycle-id>.json` for self-grading via `drain-cycle grade`.
