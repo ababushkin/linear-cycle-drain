@@ -20,6 +20,9 @@ Read this section before installing — `drain-cycle` is deliberately not for ev
 - **`git` CLI** on `$PATH`.
 - **`claude` CLI** on `$PATH` — see the [Claude Code install docs](https://docs.claude.com/en/docs/claude-code/setup).
 - **Linear API key** with read/write on your Personal team. Generate one at <https://linear.app/settings/api>.
+- **A `repo:<name>` Linear label on every cycle issue.** `drain-cycle` resolves the target repo per issue from this label — an unlabelled issue halts the run before any worktree is created. Create the labels at the team level in Linear (Settings → Labels) using the exact names your `repos.yml` keys use.
+- **A `~/.drain-cycle/repos.yml` config file** mapping each `<name>` to the absolute path of the repo on disk (see Install below).
+- **Each target repo must gitignore `.worktrees/`.** `drain-cycle` creates `.worktrees/<issue-identifier>/` inside the target repo per spawned session; without an ignore rule the spawned `git add` calls can sweep those paths into commits. A one-line `.gitignore` entry per repo is enough.
 
 ## Install
 
@@ -33,6 +36,17 @@ echo 'LINEAR_API_KEY=lin_api_…' > .env  # loaded automatically at CLI start
 
 `.env` lives at the drain-cycle repo root and is gitignored. If you'd rather export `LINEAR_API_KEY` in your shell rc, that still works and takes precedence over `.env`.
 
+Create `~/.drain-cycle/repos.yml` mapping each label name to the repo's absolute path on disk:
+
+```yaml
+repos:
+  drain-cycle:  /Users/you/src/drain-cycle
+  pde-skills:   /Users/you/src/pde-skills
+  stock-review: /Users/you/src/stock-review
+```
+
+A `~`-prefixed path inside the file is expanded against `$HOME`. A missing or malformed `repos.yml` halts the CLI before any Linear traffic — exit 1, message on stderr, no run-log entry written.
+
 Verify the install:
 
 ```bash
@@ -42,40 +56,39 @@ drain-cycle --help     # any invocation that doesn't crash on import works
 ## Usage
 
 ```
-cd /path/to/target-repo
 drain-cycle
 ```
 
-Drains the current cycle's Todo/Backlog issues (in priority order) until either the cycle is empty (exit 0) or an issue halts (exit 1).
+Run from anywhere — `drain-cycle` resolves each issue's target repo from its `repo:<name>` label. Drains the current cycle's Todo/Backlog issues (in priority order) until either the cycle is empty (exit 0) or an issue halts (exit 1).
 
 ### What a run looks like
 
 ```bash
-$ cd ~/src/my-project
 $ drain-cycle
 
 # drain-cycle reads the current Linear cycle, fetches its Todo/Backlog issues,
-# and works through them one at a time. The first issue it picks up:
+# and works through them one at a time. Each issue's target repo is resolved
+# from its `repo:<name>` label against ~/.drain-cycle/repos.yml.
 
 drain-cycle: picked ABA-241: Persist halt_reason in run-log entries
 
-# It creates a fresh git worktree under .worktrees/ABA-241/ branched off main,
-# flips the Linear issue to In Progress, then spawns a `claude -p` session
-# inside the worktree. The Claude session's own output streams to your
-# terminal here — same as if you ran it by hand.
+# ABA-241 is labelled `repo:drain-cycle`, which `repos.yml` maps to
+# ~/src/drain-cycle. The orchestrator creates a fresh git worktree under
+# ~/src/drain-cycle/.worktrees/ABA-241/ branched off main, flips the Linear
+# issue to In Progress, then spawns a `claude -p` session inside the worktree.
 
   (… claude -p session does the work: reads the issue, edits files,
        runs tests, commits, pushes, marks the issue Done in Linear …)
 
-# When the session exits, drain-cycle re-reads Linear. The issue is now in
-# the Done column — so the worktree gets cleaned up and the next issue starts.
-
 drain-cycle: ABA-241 done; worktree removed.
-drain-cycle: picked ABA-242: Spec-shaped halt message on stderr
+drain-cycle: picked PDE-12: Add the new triage skill
+
+# PDE-12 is labelled `repo:pde-skills`, so this run lands in a worktree
+# under ~/src/pde-skills/.worktrees/PDE-12/ — different repo, same machinery.
 
   (… second session runs …)
 
-drain-cycle: ABA-242 done; worktree removed.
+drain-cycle: PDE-12 done; worktree removed.
 drain-cycle: picked ABA-243: Compute cycle_duration_seconds
 
   (… third session runs, but doesn't finish the work …)
@@ -85,12 +98,12 @@ drain-cycle: picked ABA-243: Compute cycle_duration_seconds
 # investigate. The worktree is left in place; the run log captures the same
 # halt line you see on screen.
 
-Halt: ABA-243 (final state: In Progress) at /Users/you/src/my-project/.worktrees/ABA-243
+Halt: ABA-243 (final state: In Progress) at /Users/you/src/drain-cycle/.worktrees/ABA-243
 $ echo $?
 1
 ```
 
-After the run, the per-cycle JSON log is at `~/.drain-cycle/runs/<cycle-id>.json`. On halt, the worktree at `.worktrees/<issue-identifier>/` is preserved for inspection; on success it's removed.
+After the run, one JSON log per invocation is at `~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`. On halt, the worktree at `<target-repo>/.worktrees/<issue-identifier>/` is preserved for inspection; on success it's removed.
 
 ## Recommended companion skills
 
@@ -103,7 +116,7 @@ Both are skill packs for Claude Code — install them globally and the spawned `
 
 ## Logs & grading
 
-Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, and `halt_reason` on the halting entry. Use it to gauge how cleanly your runs complete — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
+Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, and `halt_reason` on the halting entry. Use it to gauge how cleanly your runs complete — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
 
 ## Design
 

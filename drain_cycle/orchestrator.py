@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import linear, prompt, runlog, worktree
+from .repos import RepoResolutionError, Repos
 
 _DONE_STATE_TYPE = "completed"
 _IN_PROGRESS_STATE_NAME = "In Progress"
@@ -25,6 +26,11 @@ this converts to a halt — same exit-1 + run-log entry + Halt: stderr line
 as any other halt — so a hung agent advances the cycle to operator
 attention instead of stalling indefinitely. Sized for one long unattended
 issue; raise locally if a single issue legitimately takes longer."""
+_UNRESOLVED_WORKTREE_DISPLAY = "<unresolved>"
+"""Worktree-path placeholder for the pre-spawn resolution-halt path
+(ABA-232). No path has been chosen yet — the issue couldn't be mapped
+to a target repo — so the run-log entry and stderr halt line carry this
+marker rather than a misleading fake path."""
 
 
 def _now_iso() -> str:
@@ -70,8 +76,7 @@ def _revert_to_pre_halt_state(
     return refreshed["state"]["name"], None
 
 
-def run() -> int:
-    repo = Path.cwd()
+def run(repos: Repos) -> int:
     cycle_id = linear.current_cycle_id()
     log = runlog.RunLog(cycle_id=cycle_id)
     issues = linear.pending_issues(cycle_id)
@@ -85,7 +90,30 @@ def run() -> int:
 
         started_at = _now_iso()
         try:
-            worktree_path = worktree.add(repo, identifier)
+            target_repo = repos.resolve(issue)
+        except RepoResolutionError as exc:
+            # Pre-spawn resolution halt (ABA-232): no Linear state was moved,
+            # so no revert is attempted. The worktree path is the
+            # ``<unresolved>`` placeholder since no repo was chosen.
+            state_name = issue["state"]["name"]
+            halt_reason = (
+                f"{_halt_message(identifier, state_name, Path(_UNRESOLVED_WORKTREE_DISPLAY))}"
+                f" — {exc}"
+            )
+            log.append_entry(
+                issue_identifier=identifier,
+                started_at=started_at,
+                finished_at=_now_iso(),
+                exit_code=-1,
+                final_linear_state=state_name,
+                worktree_path=_UNRESOLVED_WORKTREE_DISPLAY,
+                halt_reason=halt_reason,
+            )
+            print(halt_reason, file=sys.stderr)
+            return 1
+
+        try:
+            worktree_path = worktree.add(target_repo, identifier)
             # Orchestrator owns the Todo→In Progress half so the lifecycle
             # doesn't depend on the spawned agent's compliance (ABA-209). The
             # agent still owns the …→Done half via Linear MCP — see prompt.py
@@ -96,7 +124,7 @@ def run() -> int:
             # a traceback: write a run-log entry with the planned worktree
             # path, print the halt message, exit non-zero. Subsequent issues
             # are not attempted — same contract as a spawn-time halt.
-            planned_path = repo / worktree.WORKTREE_DIR / identifier
+            planned_path = target_repo / worktree.WORKTREE_DIR / identifier
             state_name = issue["state"]["name"]
             halt_reason = (
                 f"{_halt_message(identifier, state_name, planned_path)}"
@@ -166,7 +194,7 @@ def run() -> int:
                 worktree_path=str(worktree_path),
                 halt_reason=None,
             )
-            worktree.remove(repo, worktree_path)
+            worktree.remove(target_repo, worktree_path)
             print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
             continue
 

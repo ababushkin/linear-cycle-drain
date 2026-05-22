@@ -30,10 +30,16 @@ from pathlib import Path
 
 import pytest
 
-from drain_cycle import linear, orchestrator
+from drain_cycle import linear, orchestrator, repos
 
 
-def _issue(identifier: str, priority: int, sort_order: float) -> dict:
+def _issue(
+    identifier: str,
+    priority: int,
+    sort_order: float,
+    *,
+    repo_name: str = "test-repo",
+) -> dict:
     return {
         "id": f"id-{identifier}",
         "identifier": identifier,
@@ -42,6 +48,7 @@ def _issue(identifier: str, priority: int, sort_order: float) -> dict:
         "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
+        "labels": [f"repo:{repo_name}"],
     }
 
 
@@ -112,7 +119,7 @@ def test_orchestrator_drains_every_issue_in_sorted_order(
     fake_claude = _write_fake_claude_script(tmp_path, done_marker)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
 
     assert exit_code == 0
     # The script appends the worktree-basename (== issue identifier) on each

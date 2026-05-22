@@ -22,10 +22,16 @@ from pathlib import Path
 
 import pytest
 
-from drain_cycle import linear, orchestrator
+from drain_cycle import linear, orchestrator, repos
 
 
-def _issue(identifier: str, priority: int, sort_order: float) -> dict:
+def _issue(
+    identifier: str,
+    priority: int,
+    sort_order: float,
+    *,
+    repo_name: str = "test-repo",
+) -> dict:
     return {
         "id": f"id-{identifier}",
         "identifier": identifier,
@@ -34,6 +40,7 @@ def _issue(identifier: str, priority: int, sort_order: float) -> dict:
         "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
+        "labels": [f"repo:{repo_name}"],
     }
 
 
@@ -96,7 +103,7 @@ def test_orchestrator_transitions_to_in_progress_before_each_spawn(
     fake_claude = _write_fake_claude_script(tmp_path, trace)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
 
     assert exit_code == 0
     # Every picked issue had set_state called with "In Progress", in pick order.

@@ -28,10 +28,19 @@ from pathlib import Path
 
 import pytest
 
-from drain_cycle import linear, orchestrator
+from drain_cycle import linear, orchestrator, repos
 
 
-def _issue(identifier: str, priority: int, sort_order: float) -> dict:
+_TEST_REPO_NAME = "test-repo"
+
+
+def _issue(
+    identifier: str,
+    priority: int,
+    sort_order: float,
+    *,
+    repo_name: str = _TEST_REPO_NAME,
+) -> dict:
     return {
         "id": f"id-{identifier}",
         "identifier": identifier,
@@ -40,7 +49,12 @@ def _issue(identifier: str, priority: int, sort_order: float) -> dict:
         "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
+        "labels": [f"repo:{repo_name}"],
     }
+
+
+def _stub_repos(repo_path: Path) -> repos.Repos:
+    return repos.Repos(mapping={_TEST_REPO_NAME: repo_path})
 
 
 def _init_repo(repo: Path) -> None:
@@ -97,7 +111,7 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
     fake_claude = _write_fake_claude_script(tmp_path)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(_stub_repos(repo))
 
     assert exit_code != 0
     # Loop bailed before touching the second issue. The first id may be
@@ -182,7 +196,7 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
     fake_claude = _write_fake_claude_script(tmp_path)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(_stub_repos(repo))
     assert exit_code != 0
 
     # Per-run filename (ABA-230): one file per drain-cycle invocation,
@@ -292,7 +306,7 @@ def test_orchestrator_records_halt_when_setup_raises_before_spawn(
     forbidden_claude.chmod(0o755)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(forbidden_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(_stub_repos(repo))
     assert exit_code == 1
 
     runs_dir = tmp_path / ".drain-cycle" / "runs"
@@ -365,7 +379,7 @@ def test_orchestrator_records_halt_when_claude_subprocess_times_out(
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(hanging_claude)])
     monkeypatch.setattr(orchestrator, "_ISSUE_TIMEOUT_SECONDS", 0.3)
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(_stub_repos(repo))
     assert exit_code == 1
 
     runs_dir = tmp_path / ".drain-cycle" / "runs"
@@ -435,7 +449,7 @@ def test_orchestrator_reverts_state_on_timeout_halt(
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(hanging_claude)])
     monkeypatch.setattr(orchestrator, "_ISSUE_TIMEOUT_SECONDS", 0.3)
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(_stub_repos(repo))
     assert exit_code == 1
 
     # Two set_state calls in pick order: In Progress (pre-spawn), then
@@ -505,7 +519,7 @@ def test_orchestrator_reverts_state_on_post_spawn_not_done(
     fake_claude = _write_fake_claude_script(tmp_path)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(_stub_repos(repo))
     assert exit_code == 1
 
     assert set_state_calls == [
@@ -569,7 +583,7 @@ def test_orchestrator_halt_records_revert_failure_non_fatally(
     fake_claude = _write_fake_claude_script(tmp_path)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(_stub_repos(repo))
     assert exit_code == 1
 
     # Revert was attempted: In Progress (pre-spawn) and then the failing
@@ -634,7 +648,7 @@ def test_orchestrator_setup_failure_does_not_attempt_revert(
     forbidden_claude.chmod(0o755)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(forbidden_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(_stub_repos(repo))
     assert exit_code == 1
     # Exactly one set_state call — the failed pre-spawn In Progress
     # transition. No revert attempt follows, because the state never moved.
@@ -645,7 +659,7 @@ def test_orchestrator_rerun_after_halt_picks_up_same_issue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ABA-229 AC5: after a halted run that successfully reverts state, a
-    second ``orchestrator.run()`` invocation against the same cycle picks
+    second ``orchestrator.run(_stub_repos(repo))`` invocation against the same cycle picks
     up the previously-halted issue first — because the revert restored
     it to a ``_PENDING_STATE_TYPES`` value and the existing sort key
     preserves its priority position.
@@ -702,7 +716,7 @@ def test_orchestrator_rerun_after_halt_picks_up_same_issue(
     fake_claude.chmod(0o755)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    first_run_exit = orchestrator.run()
+    first_run_exit = orchestrator.run(_stub_repos(repo))
     assert first_run_exit == 1
     # State reverted to Todo so a re-run can rediscover it.
     assert live_states[first["id"]]["name"] == first["state"]["name"]
@@ -723,7 +737,7 @@ def test_orchestrator_rerun_after_halt_picks_up_same_issue(
         capture_output=True,
     )
 
-    second_run_exit = orchestrator.run()
+    second_run_exit = orchestrator.run(_stub_repos(repo))
     assert second_run_exit == 1
 
     picked = trace.read_text().splitlines()

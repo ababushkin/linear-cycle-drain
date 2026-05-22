@@ -21,10 +21,16 @@ from pathlib import Path
 
 import pytest
 
-from drain_cycle import linear, orchestrator
+from drain_cycle import linear, orchestrator, repos
 
 
-def _issue(identifier: str, priority: int, sort_order: float) -> dict:
+def _issue(
+    identifier: str,
+    priority: int,
+    sort_order: float,
+    *,
+    repo_name: str = "test-repo",
+) -> dict:
     return {
         "id": f"id-{identifier}",
         "identifier": identifier,
@@ -33,6 +39,7 @@ def _issue(identifier: str, priority: int, sort_order: float) -> dict:
         "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
+        "labels": [f"repo:{repo_name}"],
     }
 
 
@@ -88,7 +95,7 @@ def test_orchestrator_writes_runlog_with_one_entry_per_successful_issue(
     fake_claude = _write_fake_claude_script(tmp_path, done_marker)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    exit_code = orchestrator.run()
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
     assert exit_code == 0
 
     # Per-run filename (ABA-230): one file per drain-cycle invocation,

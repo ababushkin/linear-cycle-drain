@@ -83,6 +83,10 @@ def pending_issues(cycle_id: str) -> list[dict[str, Any]]:
     No pagination: personal cycles fit comfortably in one page. If a cycle
     ever exceeds 100 pending issues, that's a planning problem, not a tool
     problem (see ``PRODUCT_RULES`` Rule A5 — focus is the multiplier).
+
+    ``labels`` is flattened from the GraphQL ``{nodes: [{name}]}`` shape to
+    a plain ``list[str]`` so downstream code (``repos.Repos.resolve`` per
+    ABA-232) doesn't need to know the wire shape.
     """
     data = _post(
         """
@@ -102,13 +106,17 @@ def pending_issues(cycle_id: str) -> list[dict[str, Any]]:
               priority
               sortOrder
               state { type name }
+              labels { nodes { name } }
             }
           }
         }
         """,
         {"cycleId": cycle_id, "stateTypes": _PENDING_STATE_TYPES},
     )
-    return _sort_pending_issues(data["issues"]["nodes"])
+    issues = data["issues"]["nodes"]
+    for issue in issues:
+        issue["labels"] = [node["name"] for node in issue["labels"]["nodes"]]
+    return _sort_pending_issues(issues)
 
 
 def get_issue(issue_id: str) -> dict[str, Any]:

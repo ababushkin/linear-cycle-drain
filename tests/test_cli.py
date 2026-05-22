@@ -5,23 +5,28 @@ Pins the four dispatch paths in ``cli.main``: zero-arg → orchestrator,
 else → usage on stderr + exit 2. The behaviour guarded against is the
 old fall-through where a misspelled subcommand silently triggered a
 real cycle drain.
+
+ABA-232 added a fifth path: zero-arg must first eagerly load
+``repos.yml`` and exit 1 (without invoking the orchestrator, without
+writing any run-log) when the config is broken. That test sits below.
 """
 from __future__ import annotations
 
 import pytest
 
-from drain_cycle import cli, grade, orchestrator
+from drain_cycle import cli, grade, orchestrator, repos
 
 
 def _stub_no_op_orchestrator(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     called: list[bool] = []
 
-    def fake_run() -> int:
+    def fake_run(loaded_repos) -> int:
         called.append(True)
         return 0
 
     monkeypatch.setattr(orchestrator, "run", fake_run)
     monkeypatch.setattr(cli, "load_dotenv", lambda *_a, **_kw: False)
+    monkeypatch.setattr(repos, "load", lambda *_a, **_kw: repos.Repos(mapping={}))
     return called
 
 
@@ -111,7 +116,7 @@ def test_unknown_invocation_prints_usage_to_stderr_and_exits_two(
 
 
 def forbid_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom() -> int:
+    def boom(*_a, **_kw) -> int:
         raise AssertionError("orchestrator.run() must not be called on unknown args")
 
     monkeypatch.setattr(orchestrator, "run", boom)
@@ -122,3 +127,30 @@ def forbid_grade(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("grade.run() must not be called on unknown args")
 
     monkeypatch.setattr(grade, "run", boom)
+
+
+def test_zero_arg_invocation_eagerly_validates_repos_yml(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ABA-232: a broken/missing ``repos.yml`` halts the zero-arg
+    invocation before any orchestrator call — no Linear traffic, no
+    run-log file, exit 1 on stderr. Stubs orchestrator with a tripwire
+    so a regression that defers validation until after the orchestrator
+    starts (and consequently after Linear is hit) fails loudly here."""
+    forbid_orchestrator(monkeypatch)
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_a, **_kw: False)
+
+    def failing_load(*_a, **_kw) -> repos.Repos:
+        raise repos.RepoConfigError("~/.drain-cycle/repos.yml not found at /nope")
+
+    monkeypatch.setattr(repos, "load", failing_load)
+    monkeypatch.setattr("sys.argv", ["drain-cycle"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "repos.yml" in captured.err
+    # Pure stderr surface — nothing on stdout for the operator to parse.
+    assert captured.out == ""
