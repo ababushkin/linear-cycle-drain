@@ -4,7 +4,7 @@ Unattended execution of a Linear cycle. One invocation, no prompts; each issue r
 
 ## Why this exists
 
-Today, executing a Linear cycle is manual: launch Claude per issue, watch it run, approve permissions, update Linear, repeat. This time that should go to *scoping the next cycle* and *validating delivered work* is consumed by execution shepherding. `drain-cycle` removes that shepherding for the common path so attention shifts back to scoping and validation. The full goal / KRs / kill condition live in the Linear project description.
+Today, executing a Linear cycle is manual: launch Claude per issue, watch it run, approve permissions, update Linear, repeat. Execution shepherding consumes time that should go to *scoping the next cycle* and *validating delivered work*. `drain-cycle` removes that shepherding so attention shifts back to scoping and validation. The full goal / KRs / kill condition live in the Linear project description.
 
 ## Is this for you?
 
@@ -31,7 +31,7 @@ pip install -e .                      # installs the `drain-cycle` CLI
 echo 'LINEAR_API_KEY=lin_api_…' > .env  # loaded automatically at CLI start
 ```
 
-`.env` lives at the drain-cycle repo root and is gitignored, if you'd rather export `LINEAR_API_KEY` in your shell rc, that still works and takes precedence over `.env`.
+`.env` lives at the drain-cycle repo root and is gitignored. If you'd rather export `LINEAR_API_KEY` in your shell rc, that still works and takes precedence over `.env`.
 
 Verify the install:
 
@@ -103,7 +103,7 @@ Both are skill packs for Claude Code — install them globally and the spawned `
 
 ## Logs & grading
 
-Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, and `halt_reason` on the halting entry. You can use this to get some stats on how cleanly your executions are performing — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
+Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, and `halt_reason` on the halting entry. Use it to gauge how cleanly your runs complete — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
 
 ## Design
 
