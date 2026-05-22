@@ -317,3 +317,66 @@ def test_orchestrator_records_halt_when_setup_raises_before_spawn(
     assert all(
         e["issue_identifier"] != second["identifier"] for e in payload["entries"]
     )
+
+
+def test_orchestrator_records_halt_when_claude_subprocess_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A spawned ``claude -p`` session that exceeds the per-issue timeout
+    must convert to a halt — run-log entry + Halt: stderr line + exit 1
+    — instead of stalling the cycle forever. The worktree is preserved
+    so the operator can inspect what state the hung session left behind.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    raw_issues = [first, second]
+
+    def fake_current_cycle_id() -> str:
+        return "stub-cycle-id"
+
+    def fake_pending_issues(cycle_id: str) -> list[dict]:
+        return linear._sort_pending_issues(raw_issues)
+
+    def forbidden_get_issue(issue_id: str) -> dict:
+        raise AssertionError("get_issue called after timeout")
+
+    monkeypatch.setattr(linear, "current_cycle_id", fake_current_cycle_id)
+    monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
+    monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
+    monkeypatch.setattr(linear, "get_issue", forbidden_get_issue)
+
+    # Fake claude that sleeps longer than the test timeout so the real
+    # ``subprocess.run(timeout=…)`` raises TimeoutExpired.
+    hanging_claude = tmp_path / "hanging-claude.sh"
+    hanging_claude.write_text("#!/bin/sh\nsleep 10\n")
+    hanging_claude.chmod(0o755)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(hanging_claude)])
+    monkeypatch.setattr(orchestrator, "_ISSUE_TIMEOUT_SECONDS", 0.3)
+
+    exit_code = orchestrator.run()
+    assert exit_code == 1
+
+    runs_dir = tmp_path / ".drain-cycle" / "runs"
+    payload = json.loads(next(runs_dir.glob("stub-cycle-id-*.json")).read_text())
+    assert len(payload["entries"]) == 1
+    entry = payload["entries"][0]
+    assert entry["issue_identifier"] == first["identifier"]
+    assert entry["final_linear_state"] == first["state"]["name"]
+
+    stderr_lines = capsys.readouterr().err.splitlines()
+    (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
+    assert entry["halt_reason"] == halt_line
+    assert "timeout" in halt_line.lower()
+
+    # Worktree preserved for inspection (existing halt contract).
+    assert (repo / ".worktrees" / first["identifier"]).is_dir()
+    # Second issue never attempted.
+    assert all(
+        e["issue_identifier"] != second["identifier"] for e in payload["entries"]
+    )

@@ -19,6 +19,12 @@ from . import linear, prompt, runlog, worktree
 _DONE_STATE_TYPE = "completed"
 _IN_PROGRESS_STATE_NAME = "In Progress"
 _CLAUDE_CMD = ["claude", "-p", "--dangerously-skip-permissions"]
+_ISSUE_TIMEOUT_SECONDS = 3600.0
+"""Outer cap on one spawned ``claude -p`` session. A session that exceeds
+this converts to a halt — same exit-1 + run-log entry + Halt: stderr line
+as any other halt — so a hung agent advances the cycle to operator
+attention instead of stalling indefinitely. Sized for one long unattended
+issue; raise locally if a single issue legitimately takes longer."""
 
 
 def _now_iso() -> str:
@@ -82,11 +88,30 @@ def run() -> int:
 
         agent_prompt = prompt.build(issue, worktree_path)
 
-        result = subprocess.run(
-            [*_CLAUDE_CMD, agent_prompt],
-            cwd=worktree_path,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [*_CLAUDE_CMD, agent_prompt],
+                cwd=worktree_path,
+                check=False,
+                timeout=_ISSUE_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            state_name = issue["state"]["name"]
+            halt_reason = (
+                f"{_halt_message(identifier, state_name, worktree_path)}"
+                f" — claude -p exceeded {_ISSUE_TIMEOUT_SECONDS:.0f}s timeout"
+            )
+            log.append_entry(
+                issue_identifier=identifier,
+                started_at=started_at,
+                finished_at=_now_iso(),
+                exit_code=-1,
+                final_linear_state=state_name,
+                worktree_path=str(worktree_path),
+                halt_reason=halt_reason,
+            )
+            print(halt_reason, file=sys.stderr)
+            return 1
         finished_at = _now_iso()
 
         refreshed = linear.get_issue(issue["id"])
