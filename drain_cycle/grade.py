@@ -6,8 +6,9 @@ emits a human-readable health read:
 1. Per-cycle section (Task 2 / ABA-219): cycle_id, attempted count,
    integer completion %, and halted entries as
    ``<identifier>: (<final_linear_state>, <exit_code>)``.
-2. Across-cycles section (Task 3 / ABA-220, pending): trend + recurrent
-   failure-mode tuples.
+2. Across-cycles section (Task 3 / ABA-220): trend label over the last
+   ``_TREND_WINDOW`` cycles + recurrent ``(final_linear_state,
+   exit_code)`` tuples appearing in ≥2 of those cycles.
 3. Verdict section (Task 4 / ABA-221, pending): OK / WATCH / KILL.
 
 Run logs are grouped by ``cycle_id`` because one cycle can produce
@@ -19,11 +20,16 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from . import runlog
+
+_TREND_WINDOW = 3
+"""Number of most-recent cycles considered by the trend + recurrent-tuple
+analysis (Task 3 / ABA-220). Pinned here; not configurable by the CLI."""
 
 
 def default_runs_dir() -> Path:
@@ -73,6 +79,60 @@ def _collect_cycles(runs_dir: Path) -> list[_Cycle]:
     return sorted(cycles.values(), key=lambda c: (c.earliest_filename, c.cycle_id))
 
 
+def _trend_label(percents: list[int]) -> str:
+    """Strict-monotonic over the window → improving/regressing; else flat.
+
+    Single-cycle or empty windows are "flat" by definition (no direction
+    can be inferred from one or zero points). Two-cycle windows still
+    apply the strict-monotonic rule (50 → 60 is improving; 50 → 50 is
+    flat because the inequality is strict).
+    """
+    if len(percents) < 2:
+        return "flat"
+    if all(a < b for a, b in zip(percents, percents[1:])):
+        return "improving"
+    if all(a > b for a, b in zip(percents, percents[1:])):
+        return "regressing"
+    return "flat"
+
+
+def _recurrent_tuples(cycles: list[_Cycle]) -> list[tuple[tuple[str, int], int]]:
+    """Tuples appearing in ≥2 of the supplied cycles, with cycle-count.
+
+    Counted per cycle, not per entry: if a tuple appears three times
+    inside one cycle and once in another, it counts as 2 cycles (not 4).
+    Sorted by descending count then by the tuple itself for determinism.
+    """
+    counter: Counter[tuple[str, int]] = Counter()
+    for cycle in cycles:
+        seen_in_cycle: set[tuple[str, int]] = set()
+        for entry in cycle.entries:
+            key = (entry["final_linear_state"], entry["exit_code"])
+            seen_in_cycle.add(key)
+        counter.update(seen_in_cycle)
+    recurrent = [(tup, count) for tup, count in counter.items() if count >= 2]
+    recurrent.sort(key=lambda item: (-item[1], item[0]))
+    return recurrent
+
+
+def _render_across_cycles(cycles: list[_Cycle]) -> str:
+    window = cycles[-_TREND_WINDOW:]
+    percents = [c.completion_percent for c in window]
+    lines = [
+        f"window: last {len(window)} of {len(cycles)} cycle(s)"
+        f" (max {_TREND_WINDOW})",
+        f"trend: {_trend_label(percents)}",
+    ]
+    recurrent = _recurrent_tuples(window)
+    if not recurrent:
+        lines.append("recurrent tuples: none")
+    else:
+        lines.append("recurrent tuples:")
+        for (state, exit_code), count in recurrent:
+            lines.append(f"  ({state}, {exit_code}) x {count}")
+    return "\n".join(lines)
+
+
 def _render_per_cycle(cycle: _Cycle) -> str:
     lines = [
         f"cycle_id: {cycle.cycle_id}",
@@ -103,4 +163,9 @@ def run(runs_dir: Path) -> int:
     for cycle in cycles:
         print(_render_per_cycle(cycle))
         print()
+
+    print("== Across cycles ==")
+    print()
+    print(_render_across_cycles(cycles))
+    print()
     return 0
