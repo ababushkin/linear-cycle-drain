@@ -16,6 +16,11 @@ import httpx
 _ENDPOINT = "https://api.linear.app/graphql"
 _TEAM_NAME = "Personal"
 _PENDING_STATE_TYPES = ["backlog", "unstarted"]
+_NO_PRIORITY_SORT_KEY = 5
+"""Sort key for Linear's ``priority == 0`` (No priority). Linear encodes
+1..4 as Urgent..Low; ``0`` means "unset" and must sort *after* Low, not
+before Urgent. Picking 5 keeps the 1..4 ordering intact and pushes 0
+to the end."""
 
 
 def _post(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -64,11 +69,11 @@ def _sort_pending_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     Linear encodes priority as 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low.
     The quirk worth pinning down in a test: ``0`` must sort *after* ``4``, not
-    before ``1``. We remap 0→5 in the sort key and leave 1..4 in place.
+    before ``1``. We remap 0→``_NO_PRIORITY_SORT_KEY`` and leave 1..4 in place.
     """
     def key(issue: dict[str, Any]) -> tuple[int, float]:
         p = issue["priority"]
-        return (p if p else 5, issue["sortOrder"])
+        return (p if p else _NO_PRIORITY_SORT_KEY, issue["sortOrder"])
     return sorted(issues, key=key)
 
 
