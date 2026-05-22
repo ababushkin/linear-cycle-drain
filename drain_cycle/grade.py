@@ -76,12 +76,23 @@ def _collect_cycles(runs_dir: Path) -> list[_Cycle]:
     pinned in ABA-219's scope; in practice cycles never tie because each
     cycle has its own UUID, but the rule is held for determinism if two
     cycles ever did share a min-filename timestamp.
+
+    Malformed files — invalid JSON, missing ``cycle_id`` — are skipped
+    with a stderr warning. The grade tool is the kill-condition gauge;
+    one bad file should never block reading the rest.
     """
     files = sorted(runs_dir.glob("*.json"))
     cycles: dict[str, _Cycle] = {}
     for path in files:
-        payload = json.loads(path.read_text())
-        cycle_id = payload["cycle_id"]
+        try:
+            payload = json.loads(path.read_text())
+            cycle_id = payload["cycle_id"]
+        except (json.JSONDecodeError, KeyError, OSError) as exc:
+            print(
+                f"drain-cycle grade: skipping malformed run-log {path}: {exc}",
+                file=sys.stderr,
+            )
+            continue
         cycle = cycles.setdefault(cycle_id, _Cycle(cycle_id=cycle_id))
         cycle.entries.extend(payload.get("entries", []))
         if not cycle.earliest_filename or path.name < cycle.earliest_filename:

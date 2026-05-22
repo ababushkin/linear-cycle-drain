@@ -69,3 +69,30 @@ def test_grade_reads_one_fixture_and_prints_cycle_id(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "stub-cycle-id" in captured.out
+
+
+def test_grade_skips_malformed_run_log_files_and_reads_the_rest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """grade is the kill-condition gauge — one bad file on disk should
+    warn on stderr and skip, not crash and block the operator from
+    reading the rest."""
+    runs_dir = tmp_path / "runs"
+    _write_fixture(runs_dir, "good-cycle")
+    # Invalid JSON.
+    (runs_dir / "garbage-20260522T100000000000Z.json").write_text("{not json")
+    # Valid JSON but missing required cycle_id key.
+    (runs_dir / "missing-key-20260522T110000000000Z.json").write_text(
+        json.dumps({"entries": []})
+    )
+
+    exit_code = grade.run(runs_dir)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    # Good fixture still printed.
+    assert "good-cycle" in captured.out
+    # Both bad files warned about on stderr by name.
+    assert "garbage-20260522T100000000000Z.json" in captured.err
+    assert "missing-key-20260522T110000000000Z.json" in captured.err
+    assert "malformed" in captured.err.lower()
