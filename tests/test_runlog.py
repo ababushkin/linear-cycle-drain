@@ -1,10 +1,10 @@
 """Unit tests for the run-log artefact (Task 1 / ABA-215, US-C / ABA-196).
 
 Pins the on-disk shape — file path resolved from ``$HOME``, top-level
-``cycle_id`` / ``time_spent`` / ``entries`` keys, and the six required
-per-entry fields — without spinning up the orchestrator. Integration of
-the runlog into ``orchestrator.run()`` is exercised separately in
-``test_orchestrator_runlog.py``.
+``cycle_id`` / ``cycle_duration_seconds`` / ``entries`` keys, and the
+six required per-entry fields — without spinning up the orchestrator.
+Integration of the runlog into ``orchestrator.run()`` is exercised
+separately in ``test_orchestrator_runlog.py``.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import pytest
 from drain_cycle import runlog
 
 
-def test_runlog_initialises_file_with_empty_entries_and_null_time_spent(
+def test_runlog_initialises_file_with_empty_entries_and_zero_duration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -27,7 +27,11 @@ def test_runlog_initialises_file_with_empty_entries_and_null_time_spent(
     assert log.path == expected_path
     assert expected_path.is_file()
     payload = json.loads(expected_path.read_text())
-    assert payload == {"cycle_id": "stub-cycle", "time_spent": None, "entries": []}
+    assert payload == {
+        "cycle_id": "stub-cycle",
+        "cycle_duration_seconds": 0.0,
+        "entries": [],
+    }
 
 
 def test_append_entry_persists_two_entries_in_order_with_required_fields(
@@ -55,7 +59,8 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
 
     payload = json.loads(log.path.read_text())
     assert payload["cycle_id"] == "stub-cycle"
-    assert payload["time_spent"] is None
+    # Spans 10:00:00 → 10:10:00 across the two entries' min-start / max-finish.
+    assert payload["cycle_duration_seconds"] == 600.0
     assert isinstance(payload["entries"], list)
     assert len(payload["entries"]) == 2
 

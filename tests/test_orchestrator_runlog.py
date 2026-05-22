@@ -2,7 +2,8 @@
 
 Pins that ``orchestrator.run()`` produces the on-disk artefact US-C / ABA-196
 specifies — one entry per attempted issue, in pick order, with all six
-required fields populated correctly on the happy path.
+required fields populated correctly on the happy path, and the top-level
+``cycle_duration_seconds`` derived from the spanned timestamps.
 
 Substitution choices mirror ``test_orchestrator_iteration.py``: real git
 repo, in-process Linear stub via attribute monkey-patching, fake ``claude``
@@ -95,9 +96,15 @@ def test_orchestrator_writes_runlog_with_one_entry_per_successful_issue(
     payload = json.loads(log_path.read_text())
 
     assert payload["cycle_id"] == "stub-cycle-id"
-    assert payload["time_spent"] is None
     assert isinstance(payload["entries"], list)
     assert len(payload["entries"]) == len(raw_issues)
+
+    # cycle_duration_seconds == max(finished_at) − min(started_at) over entries.
+    starts = [datetime.fromisoformat(e["started_at"]) for e in payload["entries"]]
+    finishes = [datetime.fromisoformat(e["finished_at"]) for e in payload["entries"]]
+    expected_duration = (max(finishes) - min(starts)).total_seconds()
+    assert payload["cycle_duration_seconds"] == pytest.approx(expected_duration)
+    assert payload["cycle_duration_seconds"] >= 0.0
 
     # Entries are in pick order.
     assert [e["issue_identifier"] for e in payload["entries"]] == expected_order

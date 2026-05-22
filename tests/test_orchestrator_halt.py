@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -174,8 +175,17 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
     payload = json.loads(log_path.read_text())
 
     assert payload["cycle_id"] == "stub-cycle-id"
-    assert payload["time_spent"] is None
     assert len(payload["entries"]) == 1
+
+    # Halt entry's wall-clock duration is the cycle's duration — KR2 still
+    # accrues the unattended time we spent on the doomed issue.
+    only_entry = payload["entries"][0]
+    expected_duration = (
+        datetime.fromisoformat(only_entry["finished_at"])
+        - datetime.fromisoformat(only_entry["started_at"])
+    ).total_seconds()
+    assert payload["cycle_duration_seconds"] == pytest.approx(expected_duration)
+    assert payload["cycle_duration_seconds"] >= 0.0
 
     entry = payload["entries"][0]
     required_keys = {
