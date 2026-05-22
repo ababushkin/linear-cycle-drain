@@ -20,3 +20,5 @@ dist/
 
 # Atentic workflows
 docs/tasks
+.entire
+.claude
