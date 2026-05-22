@@ -14,6 +14,7 @@ from pathlib import Path
 from . import linear, prompt, worktree
 
 _DONE_STATE_TYPE = "completed"
+_IN_PROGRESS_STATE_NAME = "In Progress"
 _CLAUDE_CMD = ["claude", "-p", "--dangerously-skip-permissions"]
 
 
@@ -30,6 +31,10 @@ def run() -> int:
         print(f"drain-cycle: picked {identifier}: {issue['title']}", file=sys.stderr)
 
         worktree_path = worktree.add(repo, identifier)
+        # Orchestrator owns the Todo→In Progress half so the lifecycle doesn't
+        # depend on the spawned agent's compliance (ABA-209). The agent still
+        # owns the …→Done half via Linear MCP — see prompt.py tail.
+        linear.set_state(issue["id"], _IN_PROGRESS_STATE_NAME)
         agent_prompt = prompt.build(issue, worktree_path)
 
         subprocess.run(

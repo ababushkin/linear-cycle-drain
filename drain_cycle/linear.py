@@ -161,3 +161,52 @@ def get_issue(issue_id: str) -> dict[str, Any]:
     if issue is None:
         raise RuntimeError(f"Linear issue {issue_id!r} not found")
     return issue
+
+
+def set_state(issue_id: str, state_name: str) -> None:
+    """Transition an issue to the named workflow state.
+
+    Resolves the state ID by name against the configured team and then issues
+    an ``issueUpdate`` mutation. No caching — at cycle scale (≤ ~15 issues)
+    the extra round-trip is irrelevant and the simpler code is easier to test.
+    """
+    state_id = _resolve_state_id(state_name)
+    data = _post(
+        """
+        mutation IssueSetState($id: String!, $input: IssueUpdateInput!) {
+          issueUpdate(id: $id, input: $input) {
+            success
+          }
+        }
+        """,
+        {"id": issue_id, "input": {"stateId": state_id}},
+    )
+    if not data["issueUpdate"]["success"]:
+        raise RuntimeError(
+            f"Linear issueUpdate failed for {issue_id!r} → {state_name!r}"
+        )
+
+
+def _resolve_state_id(state_name: str) -> str:
+    data = _post(
+        """
+        query WorkflowState($team: String!, $name: String!) {
+          workflowStates(
+            filter: {
+              team: { name: { eq: $team } }
+              name: { eq: $name }
+            }
+            first: 1
+          ) {
+            nodes { id }
+          }
+        }
+        """,
+        {"team": _TEAM_NAME, "name": state_name},
+    )
+    nodes = data["workflowStates"]["nodes"]
+    if not nodes:
+        raise RuntimeError(
+            f"Linear workflow state {state_name!r} not found for team {_TEAM_NAME!r}"
+        )
+    return nodes[0]["id"]

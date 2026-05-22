@@ -81,6 +81,9 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
     monkeypatch.setattr(linear, "current_cycle_id", fake_current_cycle_id)
     monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
     monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+    # set_state is exercised by tests/test_orchestrator_set_state.py; here it's
+    # a no-op so this test stays focused on halt behaviour.
+    monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
 
     fake_claude = _write_fake_claude_script(tmp_path)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])

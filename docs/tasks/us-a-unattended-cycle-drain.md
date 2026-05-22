@@ -49,6 +49,12 @@ Each task below is mirrored as a standalone Linear sub-issue of ABA-194 with ful
 **Done when:** a comment on ABA-194 records the cycle ID, the run timestamp, and a per-bullet pass/waive table covering: (1) no operator prompts, (2) every issue reached Done with `In Progress → Done` visible in Linear history, (3) every worktree removed, (4) exit 0, (5) run recorded in US-C's artefact — explicitly waived with a `WAIVED-PENDING-US-C` marker if ABA-196 has not yet landed.
 **Dependencies:** Tasks 1–5 (ABA-198, ABA-199, ABA-200, ABA-201, ABA-202).
 
+### Task 7 — Orchestrator transitions issue to In Progress before spawn
+**Linear:** [ABA-209](https://linear.app/ababushkin/issue/ABA-209) (surfaced by ABA-203 smoke; blocks ABA-194)
+**Description:** The orchestrator transitions each picked issue `Todo → In Progress` via Linear GraphQL before spawning `claude -p`, so the lifecycle half-step doesn't depend on the spawned agent's compliance. Prompt template is unchanged: the agent continues to own the `… → Done` transition via Linear MCP.
+**Done when:** unit test on `linear.set_state` (stubbed `_post`, asserts the workflowStates → issueUpdate sequence and error paths); integration test on the orchestrator (same style as Task 3 / Task 5, asserts `set_state` precedes each spawn); live re-smoke against fresh fixture issues with bullet 2 of ABA-194 flipping to PASS.
+**Dependencies:** Task 6 (ABA-203) surfaced the gap. Implementation is independent of US-B / US-C.
+
 ## Open questions
 
 None — Linear access mechanism and worktree base branch were resolved before this plan was finalised.

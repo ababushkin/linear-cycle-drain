@@ -104,6 +104,9 @@ def test_orchestrator_drains_every_issue_in_sorted_order(
     monkeypatch.setattr(linear, "current_cycle_id", fake_current_cycle_id)
     monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
     monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+    # set_state is exercised by tests/test_orchestrator_set_state.py; here it's
+    # a no-op so this test stays focused on iteration order + worktree cleanup.
+    monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
 
     fake_claude = _write_fake_claude_script(tmp_path, done_marker)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
