@@ -57,7 +57,7 @@ def _init_repo(repo: Path) -> None:
 
 
 def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -111,6 +111,19 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
     # Second issue's worktree was never created.
     second_worktree = repo / ".worktrees" / second["identifier"]
     assert not second_worktree.exists()
+
+    # Spec'd halt UX (US-B / ABA-212): a single line on stderr starting with
+    # `Halt: ` carrying issue identifier, final state name, and the absolute
+    # worktree path the operator must `cd` to. The `Halt:` token is the
+    # unique grep anchor — no other stderr line on either branch starts
+    # with it.
+    stderr_lines = capsys.readouterr().err.splitlines()
+    halt_lines = [line for line in stderr_lines if line.startswith("Halt: ")]
+    assert len(halt_lines) == 1
+    (halt_line,) = halt_lines
+    assert first["identifier"] in halt_line
+    assert first["state"]["name"] in halt_line
+    assert str(first_worktree) in halt_line
 
 
 def _write_fake_claude_script(tmp_path: Path) -> Path:

@@ -70,11 +70,12 @@ def run() -> int:
             print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
             continue
 
-        # Halt UX (formatted message, deliberate preservation) is US-B / ABA-195.
-        # This slice only guarantees: do not silently advance, leave worktree on disk.
+        # Spec'd halt line (US-B / ABA-212): the `Halt:` token is the unique
+        # anchor an operator can grep stderr for; identifier + state name +
+        # absolute worktree path are all that's needed to `cd` and inspect.
         print(
-            f"drain-cycle: {identifier} ended in state {refreshed['state']['name']!r}; "
-            f"worktree preserved at {worktree_path}.",
+            f"Halt: {identifier} (final state: {refreshed['state']['name']}) "
+            f"at {worktree_path}",
             file=sys.stderr,
         )
         return 1
