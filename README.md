@@ -2,8 +2,6 @@
 
 Unattended execution of a Linear cycle. One invocation, no prompts; each issue runs in an isolated worktree under a fresh `claude -p` session that updates Linear itself.
 
-**Status:** not yet implemented. Initiative tracked at https://linear.app/ababushkin/project/autonomous-cycle-drain-eliminate-manual-shepherding-75daa8863063.
-
 ## Why this exists
 
 Today, executing a Linear cycle is manual: launch Claude per issue, watch it run, approve permissions, update Linear, repeat. The user time that should go to *scoping the next cycle* and *validating delivered work* is consumed by execution shepherding. `drain-cycle` removes that shepherding for the common path so attention shifts back to scoping and validation. The full goal / KRs / kill condition live in the Linear project description.
