@@ -23,10 +23,19 @@ Schema:
           "exit_code":          <int>,
           "final_linear_state": "Done" | "Todo" | ...,
           "worktree_path":      "<absolute path>",
+          "halt_reason":        null | "<orchestrator stderr halt line>",
         },
         ...
       ],
     }
+
+``halt_reason`` is ``null`` on every Done entry (the agent flipped state
+as required). On the orchestrator's halt entry it is the exact string
+also written to stderr — both surfaces are produced by the same
+``_halt_message`` helper in ``orchestrator.py`` so the on-disk and
+terminal values cannot drift (US-B / ABA-213). Non-last entries are
+``null`` by construction: the orchestrator returns on first halt, so
+anything before the halt is a Done entry.
 
 ``cycle_duration_seconds`` is computed automatically on every persist as
 ``max(finished_at) - min(started_at)`` across ``entries`` (``0.0`` when
@@ -89,6 +98,7 @@ class RunLog:
         exit_code: int,
         final_linear_state: str,
         worktree_path: str,
+        halt_reason: str | None = None,
     ) -> None:
         self.entries.append(
             {
@@ -98,6 +108,7 @@ class RunLog:
                 "exit_code": exit_code,
                 "final_linear_state": final_linear_state,
                 "worktree_path": worktree_path,
+                "halt_reason": halt_reason,
             }
         )
         self._persist()

@@ -116,11 +116,15 @@ def test_orchestrator_writes_runlog_with_one_entry_per_successful_issue(
         "exit_code",
         "final_linear_state",
         "worktree_path",
+        "halt_reason",
     }
     for entry in payload["entries"]:
         assert set(entry.keys()) == required_keys
         assert entry["final_linear_state"] == "Done"
         assert entry["exit_code"] == 0
+        # Done entries carry halt_reason=null (ABA-213): the orchestrator
+        # only populates it on the halt branch.
+        assert entry["halt_reason"] is None
         # ISO 8601 round-trip — fromisoformat raises on garbage.
         start = datetime.fromisoformat(entry["started_at"])
         finish = datetime.fromisoformat(entry["finished_at"])

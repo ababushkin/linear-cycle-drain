@@ -55,6 +55,7 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
         exit_code=1,
         final_linear_state="Todo",
         worktree_path="/tmp/repo/.worktrees/ABA-Y",
+        halt_reason="Halt: ABA-Y (final state: Todo) at /tmp/repo/.worktrees/ABA-Y",
     )
 
     payload = json.loads(log.path.read_text())
@@ -72,6 +73,7 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
         "exit_code",
         "final_linear_state",
         "worktree_path",
+        "halt_reason",
     }
     assert set(first.keys()) == required_keys
     assert set(second.keys()) == required_keys
@@ -93,3 +95,15 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
     # round-trip — those are the load-bearing fields for the halt path.
     assert second["exit_code"] == 1
     assert second["final_linear_state"] == "Todo"
+
+    # halt_reason round-trip (ABA-213): the Done entry's default-None is
+    # persisted as JSON `null`, and the halt entry's string survives
+    # verbatim — those are the on-disk shapes US-D / kill-condition
+    # tooling reads.
+    assert first["halt_reason"] is None
+    assert second["halt_reason"] == (
+        "Halt: ABA-Y (final state: Todo) at /tmp/repo/.worktrees/ABA-Y"
+    )
+    # The raw JSON text carries `null` (not "null"), so consumers that
+    # treat the string "null" specially are not misled.
+    assert '"halt_reason": null' in log.path.read_text()

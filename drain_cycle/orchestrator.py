@@ -1,10 +1,11 @@
 """Drain a cycle by iterating over its sorted Todo/Backlog issues.
 
 Task 3 / ABA-200 turns the walking skeleton into a real loop. Halt-on-not-Done
-polish (Task 5 / ABA-202), the orchestrator-owned Todo→In-Progress transition
-(Task 7 / ABA-209), and the run-log artefact (US-C / ABA-215) land in later
-slices; the non-Done branch in this file is deliberately minimal — it
-guarantees we do not silently advance, and leaves formatting to US-B.
+(ABA-202), the orchestrator-owned Todo→In-Progress transition (ABA-209), the
+run-log artefact (US-C / ABA-215), and the inspectable-halt UX (US-B / ABA-212
++ ABA-213) all live here. The halt-message helper ``_halt_message`` is the
+single source of truth for the operator-facing halt string — emitted both on
+stderr and into the run-log entry's ``halt_reason`` field.
 """
 from __future__ import annotations
 
@@ -22,6 +23,17 @@ _CLAUDE_CMD = ["claude", "-p", "--dangerously-skip-permissions"]
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _halt_message(identifier: str, state_name: str, worktree_path: Path) -> str:
+    """Single source of truth for the halt UX (ABA-212 / ABA-213).
+
+    The same string lands on stderr (the operator's grep anchor) and in
+    the run-log entry's ``halt_reason`` field — so US-D / kill-condition
+    tooling reads the same human-readable explanation the operator saw
+    at halt time.
+    """
+    return f"Halt: {identifier} (final state: {state_name}) at {worktree_path}"
 
 
 def run() -> int:
@@ -53,31 +65,31 @@ def run() -> int:
         finished_at = _now_iso()
 
         refreshed = linear.get_issue(issue["id"])
-        # Append before the Done/halt branching so the halt path (ABA-216)
-        # also lands an entry without restructuring the orchestrator.
+        state_name = refreshed["state"]["name"]
+        is_done = refreshed["state"]["type"] == _DONE_STATE_TYPE
+        halt_reason = (
+            None if is_done else _halt_message(identifier, state_name, worktree_path)
+        )
+        # Append unconditionally for every attempted issue (ABA-216); the
+        # halt branch's `halt_reason` carries the same string also printed
+        # to stderr below so the on-disk and terminal surfaces cannot
+        # drift (ABA-213).
         log.append_entry(
             issue_identifier=identifier,
             started_at=started_at,
             finished_at=finished_at,
             exit_code=result.returncode,
-            final_linear_state=refreshed["state"]["name"],
+            final_linear_state=state_name,
             worktree_path=str(worktree_path),
+            halt_reason=halt_reason,
         )
 
-        state_type = refreshed["state"]["type"]
-        if state_type == _DONE_STATE_TYPE:
+        if is_done:
             worktree.remove(repo, worktree_path)
             print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
             continue
 
-        # Spec'd halt line (US-B / ABA-212): the `Halt:` token is the unique
-        # anchor an operator can grep stderr for; identifier + state name +
-        # absolute worktree path are all that's needed to `cd` and inspect.
-        print(
-            f"Halt: {identifier} (final state: {refreshed['state']['name']}) "
-            f"at {worktree_path}",
-            file=sys.stderr,
-        )
+        print(halt_reason, file=sys.stderr)
         return 1
 
     return 0

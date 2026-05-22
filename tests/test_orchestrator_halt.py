@@ -141,7 +141,7 @@ def _write_fake_claude_script(tmp_path: Path) -> Path:
 
 
 def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Halt-path slice of US-C (Task 2 / ABA-216).
 
@@ -208,6 +208,7 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
         "exit_code",
         "final_linear_state",
         "worktree_path",
+        "halt_reason",
     }
     assert set(entry.keys()) == required_keys
     assert entry["issue_identifier"] == first["identifier"]
@@ -216,6 +217,19 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
     assert entry["final_linear_state"] == first["state"]["name"]
     assert entry["final_linear_state"] != "Done"
     assert entry["worktree_path"] == str(repo / ".worktrees" / first["identifier"])
+
+    # halt_reason equals the stderr halt line exactly (ABA-213) — both
+    # surfaces come from the same orchestrator._halt_message helper, so
+    # the on-disk explanation cannot drift from what the operator saw at
+    # halt time.
+    stderr_lines = capsys.readouterr().err.splitlines()
+    (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
+    assert entry["halt_reason"] == halt_line
+    # And the halt line carries the identifier, state name, and absolute
+    # worktree path (US-B / ABA-212 spec'd shape).
+    assert first["identifier"] in halt_line
+    assert first["state"]["name"] in halt_line
+    assert str(repo / ".worktrees" / first["identifier"]) in halt_line
 
     # Second issue never attempted: absent from log AND from disk.
     second_worktree = repo / ".worktrees" / second["identifier"]
