@@ -1,7 +1,10 @@
 """Minimal Linear GraphQL client.
 
-Reads ``LINEAR_API_KEY`` from the environment. Single-team scope: hardcoded
-to the ``Personal`` team per README §1 and the US-A spec.
+Reads ``LINEAR_API_KEY`` from the environment. The CLI entrypoint
+(``cli.main``) loads ``.env`` from the drain-cycle repo root before this
+module is exercised; a shell-exported value still takes precedence.
+Single-team scope: hardcoded to the ``Personal`` team per README §1 and
+the US-A spec.
 
 Walking-skeleton scope (Task 1 / ABA-198): resolve current cycle, fetch the
 first Todo/Backlog issue, re-fetch issue state by id. Task 2 / ABA-199 adds

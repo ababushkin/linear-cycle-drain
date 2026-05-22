@@ -28,8 +28,10 @@ git clone https://github.com/ababushkin/drain-cycle
 cd drain-cycle
 mise install                          # picks up mise.toml → Python 3.12
 pip install -e .                      # installs the `drain-cycle` CLI
-export LINEAR_API_KEY=lin_api_…       # add to your shell rc so it persists
+echo 'LINEAR_API_KEY=lin_api_…' > .env  # loaded automatically at CLI start
 ```
+
+`.env` lives at the drain-cycle repo root and is gitignored. The CLI resolves it via `__file__`, so the key is picked up no matter which target repo you run `drain-cycle` from. If you'd rather export `LINEAR_API_KEY` in your shell rc, that still works and takes precedence over `.env`.
 
 Verify the install:
 
