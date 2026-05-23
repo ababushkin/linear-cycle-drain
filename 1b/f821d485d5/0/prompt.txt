@@ -1,0 +1,58 @@
+Work on Linear issue ABA-233:
+
+<issue identifier="ABA-233">
+<title>Install drain-cycle as a uv tool (run-from-anywhere)</title>
+<description>
+## Problem
+
+`drain-cycle` is packaged (`pyproject.toml` declares the `drain-cycle = "drain_cycle.cli:main"` console script + hatchling backend) but is only installed into the project-local `.venv`. It is not on PATH, not a `uv tool`, not `pipx` — so you can't run it from an arbitrary directory without activating the venv or calling the full path.
+
+The CLI is already designed for run-from-anywhere: `repos.yml` is read from `~/.drain-cycle/repos.yml` (`repos.py:45`), run logs go to `~/.drain-cycle/runs/` (`runlog.py:73`), and target repos resolve by `repo:` label. The only real coupling left is secret loading.
+
+## Goal
+
+Install via `uv tool install` so `drain-cycle` lives on PATH in an isolated env. You today: `uv tool install .`. Others later: `uv tool install git+https://github.com/<...>/drain-cycle`.
+
+Chosen over pipx (uv matches the existing stack — uv.lock + mise) and over PyPI (no release/versioning burden for a single-user tool).
+
+## Plan (4 slices, each independently verifiable)
+
+### Slice 1 — Decouple secret loading from the source tree (required code change)
+
+`cli.py:37` loads `.env` only from the repo root via `Path(__file__).parent.parent`. Once installed, the package lives in an isolated tool env where that path has no `.env`.
+
+* New load order, first hit wins, shell-exported vars always override: shell env → `~/.drain-cycle/.env` → repo-root `.env` (dev-checkout fallback only).
+* Keeps the secret next to the config + run logs already in `~/.drain-cycle/`.
+* **Verify:** unset shell var, put key in `~/.drain-cycle/.env`, run `drain-cycle` from `/tmp` — it authenticates.
+
+### Slice 2 — Build + install as a tool, prove run-from-anywhere
+
+* `uv tool install .` from the repo; confirm `which drain-cycle` resolves under `~/.local/bin` and `drain-cycle --help` runs from an unrelated directory.
+* Document the dev-reinstall loop (`uv tool install --reinstall .` or `--editable`).
+* **Verify:** `cd /tmp && drain-cycle grade` reads `~/.drain-cycle/runs/`.
+
+### Slice 3 — First-run bootstrap UX
+
+* A fresh user has no `~/.drain-cycle/repos.yml`. `repos.py` already raises `RepoConfigError`; ensure the message names the exact missing path and shows the expected shape. Ship an example `repos.yml` in the repo/`docs/`.
+* Document the two external prerequisites assumed on PATH: the `claude` CLI and `uv`.
+* **Verify:** with `~/.drain-cycle/` empty, `drain-cycle` exits 1 with an actionable message, not a traceback.
+
+### Slice 4 — README install section
+
+* Replace any "run from the venv" guidance with the `uv tool install` flow (you-today + others-later) plus `~/.drain-cycle/` setup (key + repos.yml).
+
+## Out of scope (easy follow-ups, not blocking run-from-anywhere)
+
+* Publishing to PyPI.
+* A `drain-cycle init` scaffolding command.
+
+## Acceptance criteria
+
+* `drain-cycle` runs from any directory after `uv tool install .`, with no repo-root `.env` present.
+* `LINEAR_API_KEY` loads from `~/.drain-cycle/.env` (shell export still wins).
+* Missing `~/.drain-cycle/repos.yml` produces an actionable error, not a traceback.
+* README documents the install + setup path.
+</description>
+<team name="Personal"/>
+<project name="Autonomous cycle drain - eliminate manual shepherding">A CLI that drains a Linear cycle by spawning fresh Claude Code sessions per issue — frees operator time for scoping and validation.</project>
+</issue>
