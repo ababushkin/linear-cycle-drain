@@ -34,6 +34,22 @@ Status updates happen at the moment of state change — not batched at end of se
 
 **New work surfaced mid-flight** becomes a new Linear issue, slotted into a cycle deliberately. Don't silently expand scope.
 
+## Comments
+
+A code comment explains the code **as it stands** — an invariant, a non-obvious constraint, a workaround the next reader would otherwise be surprised by. It does not narrate how the code came to look this way.
+
+Do not write, in any comment or docstring:
+
+- Linear issue / ticket IDs (`ABA-NNN`), user-story labels (`US-A`…`US-D`), or task numbers (`Task 3`, `AC2`).
+- Commit SHAs or PR numbers.
+- Fix-history narration: "added for…", "fixes the bug where…", "regression caused by…", "previously this…", dates an issue was discovered.
+
+That context belongs in the commit message, the PR description, the Linear issue, or `docs/design-decisions.md` — durable artefacts that carry process history without rotting into the code. A comment pointing at a closed ticket or a squashed commit is noise to everyone who reads the code later.
+
+When you find an existing comment that breaks this: strip the reference and keep the explanatory prose; reword if the label was the grammatical subject; inline the explanation if it lived inside the parenthetical; delete the whole comment if nothing of value remains.
+
+Not covered by this rule — leave these alone: identifiers used as **sample data** in tests (`_issue("ABA-1", …)`, `worktree_path=".../ABA-A"`) and comments describing that data; schema/format placeholders (`"issue_identifier": "ABA-NNN"`); and references to in-repo docs (`README §1`, `docs/design-decisions.md`).
+
 ## Git
 
 Conventional-commit-ish prefixes: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`. Subject line ≤ 70 chars; details in the body if needed. Do not add `Co-Authored-By` trailers.
