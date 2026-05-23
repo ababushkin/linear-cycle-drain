@@ -1,0 +1,5 @@
+lets plan a comprehensive fix in so that running cycle drain against a worktree - works in a similar way to running it normally against a non-worktree branch
+
+---
+
+Plan review feedback — revise the plan to address the review comments. Comments are in /Users/anton/.crit/plans/worktree-config-parity-for-drain-cycle-workers-2026-05-24/.crit/review.json — grouped per file with start_line/end_line referencing the source. Each comment has a scope field: "line" for inline comments, "file" for file-level, or "review" for review-level comments. Read the file, revise the plan to address each comment. To reply to comments, use `crit comment --plan worktree-config-parity-for-drain-cycle-workers-2026-05-24 --reply-to <id> --author <your-name> "<explanation>"`.

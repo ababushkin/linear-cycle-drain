@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "e861ce71e652",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "README.md",
+    "docs/design-decisions.md",
+    "docs/repos.example.yml",
+    "drain_cycle/orchestrator.py",
+    "drain_cycle/repos.py",
+    "drain_cycle/worktree.py",
+    "tests/test_orchestrator_iteration.py",
+    "tests/test_repos.py",
+    "tests/test_worktree.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e8/61ce71e652/0/metadata.json",
+      "transcript": "/e8/61ce71e652/0/full.jsonl",
+      "content_hash": "/e8/61ce71e652/0/content_hash.txt",
+      "prompt": "/e8/61ce71e652/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 54972,
+    "cache_creation_tokens": 323231,
+    "cache_read_tokens": 10514099,
+    "output_tokens": 105793,
+    "api_call_count": 78
+  }
+}
