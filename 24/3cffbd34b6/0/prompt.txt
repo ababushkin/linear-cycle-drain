@@ -1,0 +1,18 @@
+i have a drain-cycle instance running, but i can't tell if its working or not
+is there a way to inspect it or see its progress
+
+---
+
+is there a way to update the app so that i can see progress showing as its running?
+
+---
+
+the last cycle drain i ran, took ages to complete, but it also consumed all of my quota. normally when i work on tasks manually, they take maximum 10 minutes and i can complete several dozen tasks before i reach my limits
+
+debug/diagnose what went wrong and lets tighten up the observability and guard rails so that:
+
+- i can better monitor what's happening when a run is running, including time elapsed, progress being made and tokens used
+- there are guard rails around time and token usage -- when they breach the worker kills the session
+- all of this should be logged into the log itself
+
+the other thing i noticed is that some of my regular plugins (eg entire.io) didn't load up during this run, so something tells me that the way it was executed also played a broader role in broader side-effects than initially planned
