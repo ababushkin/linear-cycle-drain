@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "737d39c15246",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "docs/design-decisions.md",
+    "drain_cycle/orchestrator.py",
+    "drain_cycle/runlog.py",
+    "drain_cycle/worker.py",
+    "tests/test_grade_per_cycle.py",
+    "tests/test_orchestrator_halt.py",
+    "tests/test_orchestrator_runlog.py",
+    "tests/test_runlog.py",
+    "tests/test_worker.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/73/7d39c15246/0/metadata.json",
+      "transcript": "/73/7d39c15246/0/full.jsonl",
+      "content_hash": "/73/7d39c15246/0/content_hash.txt",
+      "prompt": "/73/7d39c15246/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 17858,
+    "cache_creation_tokens": 371397,
+    "cache_read_tokens": 6494424,
+    "output_tokens": 82031,
+    "api_call_count": 45
+  }
+}
