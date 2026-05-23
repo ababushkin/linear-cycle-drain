@@ -8,12 +8,11 @@ halt string — emitted both on stderr and into the run-log entry's
 """
 from __future__ import annotations
 
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import linear, model, prompt, runlog, worktree
+from . import linear, model, prompt, runlog, worker, worktree
 from .repos import RepoResolutionError, Repos
 
 _DONE_STATE_TYPE = "completed"
@@ -73,6 +72,24 @@ def _revert_to_pre_halt_state(
     except Exception:
         return target_state_name, None
     return refreshed["state"]["name"], None
+
+
+def _worker_log_fields(result: worker.WorkerResult) -> dict[str, object]:
+    """Map a ``WorkerResult`` onto the run-log entry's usage fields.
+
+    Shared by all three worker-backed ``append_entry`` calls (timeout
+    halt, Done, not-Done halt) so the recorded usage shape can't drift
+    between branches.
+    """
+    return {
+        "duration_seconds": result.duration_seconds,
+        "model": result.model,
+        "usage": result.usage,
+        "cost_usd": result.cost_usd,
+        "num_turns": result.num_turns,
+        "session_id": result.session_id,
+        "is_error": result.is_error,
+    }
 
 
 def run(repos: Repos) -> int:
@@ -143,14 +160,19 @@ def run(repos: Repos) -> int:
         agent_prompt = prompt.build(issue, worktree_path)
         worker_model = model.resolve(issue)
 
-        try:
-            result = subprocess.run(
-                [*_CLAUDE_CMD, "--model", worker_model, agent_prompt],
-                cwd=worktree_path,
-                check=False,
-                timeout=_ISSUE_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired:
+        result = worker.run_issue(
+            claude_cmd=_CLAUDE_CMD,
+            model=worker_model,
+            prompt=agent_prompt,
+            cwd=worktree_path,
+            timeout_seconds=_ISSUE_TIMEOUT_SECONDS,
+        )
+        finished_at = _now_iso()
+
+        if result.timed_out:
+            # The worker exceeded the per-issue cap and was process-group
+            # killed (grandchildren reaped). Same revert + halt contract as
+            # a not-Done exit, with the recorded usage of the killed session.
             original_state_name = issue["state"]["name"]
             effective_state, revert_error = _revert_to_pre_halt_state(
                 issue["id"],
@@ -168,15 +190,15 @@ def run(repos: Repos) -> int:
             log.append_entry(
                 issue_identifier=identifier,
                 started_at=started_at,
-                finished_at=_now_iso(),
-                exit_code=-1,
+                finished_at=finished_at,
+                exit_code=result.exit_code,
                 final_linear_state=effective_state,
                 worktree_path=str(worktree_path),
                 halt_reason=halt_reason,
+                **_worker_log_fields(result),
             )
             print(halt_reason, file=sys.stderr)
             return 1
-        finished_at = _now_iso()
 
         refreshed = linear.get_issue(issue["id"])
         post_spawn_state = refreshed["state"]["name"]
@@ -188,10 +210,11 @@ def run(repos: Repos) -> int:
                 issue_identifier=identifier,
                 started_at=started_at,
                 finished_at=finished_at,
-                exit_code=result.returncode,
+                exit_code=result.exit_code,
                 final_linear_state=post_spawn_state,
                 worktree_path=str(worktree_path),
                 halt_reason=None,
+                **_worker_log_fields(result),
             )
             worktree.remove(target_repo, worktree_path)
             print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
@@ -216,10 +239,11 @@ def run(repos: Repos) -> int:
             issue_identifier=identifier,
             started_at=started_at,
             finished_at=finished_at,
-            exit_code=result.returncode,
+            exit_code=result.exit_code,
             final_linear_state=effective_state,
             worktree_path=str(worktree_path),
             halt_reason=halt_reason,
+            **_worker_log_fields(result),
         )
         print(halt_reason, file=sys.stderr)
         return 1

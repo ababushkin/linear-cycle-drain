@@ -1,0 +1,215 @@
+"""Unit tests for the streaming worker.
+
+What we substitute and why:
+
+* Spawned ``claude -p``: replaced with a real shell script that ``cat``s a
+  canned stream-json file to stdout (the canned file sidesteps shell
+  JSON-quoting). This is the only honest way to exercise the line-by-line
+  Popen reader, the dedup-by-message-id accumulation, and the process-group
+  kill — an in-process mock of ``Popen`` would prove none of those.
+* Real OS process groups: the timeout test spawns a script that itself
+  backgrounds a grandchild ``sleep``; after the worker times out we assert
+  the grandchild pid is dead, which only holds if the *group* (not just the
+  direct child) was killed.
+
+The canned ``assistant`` events deliberately repeat one message id across
+two events — the real ``stream-json`` emits a turn once per content block
+(thinking, text, tool_use), each copy carrying the identical usage — so
+the happy-path test pins that a turn is counted exactly once.
+"""
+from __future__ import annotations
+
+import io
+import json
+import os
+import time
+from pathlib import Path
+
+from drain_cycle import worker
+
+
+def _fake_claude_streaming(tmp_path: Path, lines: list[str], *, hang: bool = False) -> Path:
+    """A ``claude -p`` stand-in that emits ``lines`` as stdout then exits.
+
+    With ``hang=True`` the script sleeps after emitting (holding stdout
+    open and producing no terminal ``result``), so the worker hits its
+    timeout with a partially-parsed stream.
+    """
+    stream_file = tmp_path / "stream.jsonl"
+    stream_file.write_text("\n".join(lines) + "\n")
+    script = tmp_path / "fake-claude.sh"
+    body = f'#!/bin/sh\ncat "{stream_file}"\n'
+    if hang:
+        body += "sleep 30\n"
+    script.write_text(body)
+    script.chmod(0o755)
+    return script
+
+
+def _assistant(message_id: str, *, inp: int, out: int, cc: int, cr: int) -> str:
+    return json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "id": message_id,
+                "usage": {
+                    "input_tokens": inp,
+                    "output_tokens": out,
+                    "cache_creation_input_tokens": cc,
+                    "cache_read_input_tokens": cr,
+                },
+            },
+        }
+    )
+
+
+def _result(**fields: object) -> str:
+    return json.dumps({"type": "result", **fields})
+
+
+def _wait_dead(pid: int, timeout: float = 3.0) -> bool:
+    """Poll until ``pid`` no longer exists (process-group kill reaped it)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    try:
+        os.kill(pid, 0)
+        return False
+    except ProcessLookupError:
+        return True
+
+
+def test_run_issue_accumulates_usage_deduped_by_message_id(tmp_path: Path) -> None:
+    """Two turns, the first emitted twice under one id; the duplicate is
+    counted once, totals sum across turns, peak_context is the max single
+    turn, and the session summary comes from the ``result`` event."""
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "sess-1"}),
+        # Turn one, emitted twice (thinking block then text block) — same id.
+        _assistant("msg_a", inp=10, out=4, cc=100, cr=0),
+        _assistant("msg_a", inp=10, out=4, cc=100, cr=0),
+        "this is not json and must be tolerated",
+        # Turn two — distinct id, larger context.
+        _assistant("msg_b", inp=5, out=20, cc=0, cr=300),
+        _result(
+            total_cost_usd=0.42,
+            num_turns=2,
+            session_id="sess-1",
+            is_error=False,
+            usage={"input_tokens": 5, "output_tokens": 20},
+        ),
+    ]
+    script = _fake_claude_streaming(tmp_path, lines)
+    passthrough = io.StringIO()
+
+    result = worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="ignored by the fake",
+        cwd=tmp_path,
+        timeout_seconds=30.0,
+        passthrough=passthrough,
+    )
+
+    assert result.timed_out is False
+    assert result.exit_code == 0
+    assert result.model == "claude-sonnet-4-6"
+
+    # msg_a counted once: input 10+5=15, output 4+20=24, cc 100+0=100,
+    # cr 0+300=300 → cumulative 439.
+    assert result.usage == {
+        "input_tokens": 15,
+        "output_tokens": 24,
+        "cache_creation_input_tokens": 100,
+        "cache_read_input_tokens": 300,
+        "cumulative": 439,
+        "peak_context": 305,  # turn two: 5 + 300 + 0
+    }
+
+    # Session summary from the terminal result event.
+    assert result.cost_usd == 0.42
+    assert result.num_turns == 2
+    assert result.session_id == "sess-1"
+    assert result.is_error is False
+
+    assert result.duration_seconds >= 0.0
+    # The non-JSON line was echoed to the passthrough, not silently dropped.
+    assert "this is not json and must be tolerated" in passthrough.getvalue()
+
+
+def test_run_issue_times_out_and_kills_whole_process_group(tmp_path: Path) -> None:
+    """A worker that overruns its cap is killed at the process-group level,
+    reaping a grandchild that a kill of the direct child alone would
+    orphan — the bug ``subprocess.run(timeout=)`` had."""
+    pidfile = tmp_path / "grandchild.pid"
+    script = tmp_path / "hanging-claude.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        "sleep 30 &\n"  # grandchild; would survive a direct-child-only kill
+        f'echo $! > "{pidfile}"\n'
+        "sleep 30\n"  # the worker itself hangs, emitting no output
+    )
+    script.chmod(0o755)
+
+    result = worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="ignored",
+        cwd=tmp_path,
+        timeout_seconds=0.5,
+        passthrough=io.StringIO(),
+    )
+
+    assert result.timed_out is True
+    # Killed by signal → negative return code.
+    assert result.exit_code < 0
+    # No stream was emitted, so usage is all-zero and the summary is empty.
+    assert result.usage["cumulative"] == 0
+    assert result.usage["peak_context"] == 0
+    assert result.cost_usd is None
+    assert result.num_turns is None
+    assert result.session_id is None
+    assert result.is_error is None
+
+    grandchild_pid = int(pidfile.read_text().strip())
+    assert _wait_dead(grandchild_pid), (
+        f"grandchild {grandchild_pid} survived the timeout — process group "
+        "was not killed"
+    )
+
+
+def test_run_issue_falls_back_to_accumulated_usage_when_killed_before_result(
+    tmp_path: Path,
+) -> None:
+    """If the session is killed before a ``result`` event, the usage parsed
+    from the partial stream is still recorded; the result-only summary
+    fields are left ``None``."""
+    lines = [
+        _assistant("msg_a", inp=10, out=4, cc=100, cr=0),
+        _assistant("msg_b", inp=5, out=20, cc=0, cr=300),
+    ]
+    script = _fake_claude_streaming(tmp_path, lines, hang=True)
+
+    result = worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-opus-4-7",
+        prompt="ignored",
+        cwd=tmp_path,
+        timeout_seconds=1.0,
+        passthrough=io.StringIO(),
+    )
+
+    assert result.timed_out is True
+    # Accumulated from the two partial-stream turns.
+    assert result.usage["cumulative"] == 439
+    assert result.usage["peak_context"] == 305
+    assert result.usage["cache_read_input_tokens"] == 300
+    # No result event arrived.
+    assert result.cost_usd is None
+    assert result.num_turns is None
+    assert result.session_id is None
+    assert result.is_error is None

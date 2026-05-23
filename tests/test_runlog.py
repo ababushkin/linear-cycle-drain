@@ -36,6 +36,8 @@ def test_runlog_initialises_file_with_empty_entries_and_zero_duration(
     assert payload == {
         "cycle_id": "stub-cycle",
         "cycle_duration_seconds": 0.0,
+        "cycle_cost_usd": 0.0,
+        "cycle_tokens_cumulative": 0,
         "entries": [],
     }
 
@@ -53,6 +55,20 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
         exit_code=0,
         final_linear_state="Done",
         worktree_path="/tmp/repo/.worktrees/ABA-X",
+        duration_seconds=300.0,
+        model="claude-opus-4-7",
+        usage={
+            "input_tokens": 15,
+            "output_tokens": 24,
+            "cache_creation_input_tokens": 100,
+            "cache_read_input_tokens": 200,
+            "cumulative": 339,
+            "peak_context": 215,
+        },
+        cost_usd=1.25,
+        num_turns=4,
+        session_id="sess-abc",
+        is_error=False,
     )
     log.append_entry(
         issue_identifier="ABA-Y",
@@ -68,6 +84,10 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
     assert payload["cycle_id"] == "stub-cycle"
     # Spans 10:00:00 → 10:10:00 across the two entries' min-start / max-finish.
     assert payload["cycle_duration_seconds"] == 600.0
+    # Aggregates roll up only the entries that carry usage/cost: ABA-X
+    # contributes, the null-usage halt entry ABA-Y contributes zero.
+    assert payload["cycle_cost_usd"] == 1.25
+    assert payload["cycle_tokens_cumulative"] == 339
     assert isinstance(payload["entries"], list)
     assert len(payload["entries"]) == 2
 
@@ -80,9 +100,36 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
         "final_linear_state",
         "worktree_path",
         "halt_reason",
+        "duration_seconds",
+        "model",
+        "usage",
+        "cost_usd",
+        "num_turns",
+        "session_id",
+        "is_error",
     }
     assert set(first.keys()) == required_keys
     assert set(second.keys()) == required_keys
+
+    # Worker fields round-trip on the entry that carried them.
+    assert first["model"] == "claude-opus-4-7"
+    assert first["usage"]["cumulative"] == 339
+    assert first["usage"]["peak_context"] == 215
+    assert first["cost_usd"] == 1.25
+    assert first["num_turns"] == 4
+    assert first["session_id"] == "sess-abc"
+    assert first["is_error"] is False
+    assert first["duration_seconds"] == 300.0
+
+    # The halt entry passed no worker fields: every usage field is null,
+    # and duration_seconds is derived from the timestamps (10:05 → 10:10).
+    assert second["model"] is None
+    assert second["usage"] is None
+    assert second["cost_usd"] is None
+    assert second["num_turns"] is None
+    assert second["session_id"] is None
+    assert second["is_error"] is None
+    assert second["duration_seconds"] == 300.0
 
     # Append order pinned: first entry is ABA-X, second is ABA-Y.
     assert first["issue_identifier"] == "ABA-X"

@@ -123,6 +123,56 @@ def test_per_cycle_sections_ordered_chronologically_by_earliest_filename(
     assert captured.out.index("cycle-first") < captured.out.index("cycle-second")
 
 
+def test_grade_unchanged_by_worker_usage_fields(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Run logs carrying the additive worker-usage fields (and the new
+    top-level aggregates) grade identically to ones without them — grade
+    reads only ``cycle_id`` / ``final_linear_state`` / ``exit_code``."""
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    rich_entry = {
+        **_entry("ABA-1", "Done", 0),
+        "duration_seconds": 12.5,
+        "model": "claude-sonnet-4-6",
+        "usage": {
+            "input_tokens": 15,
+            "output_tokens": 24,
+            "cache_creation_input_tokens": 100,
+            "cache_read_input_tokens": 300,
+            "cumulative": 439,
+            "peak_context": 305,
+        },
+        "cost_usd": 0.42,
+        "num_turns": 2,
+        "session_id": "sess-1",
+        "is_error": False,
+    }
+    halted_entry = {**_entry("ABA-2", "In Progress", 1), "usage": None, "cost_usd": None}
+    (runs_dir / "cycle-rich-20260522T100000000000Z.json").write_text(
+        json.dumps(
+            {
+                "cycle_id": "cycle-rich",
+                "cycle_duration_seconds": 12.5,
+                "cycle_cost_usd": 0.42,
+                "cycle_tokens_cumulative": 439,
+                "entries": [rich_entry, halted_entry],
+            }
+        )
+        + "\n"
+    )
+
+    exit_code = grade.run(runs_dir)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "cycle-rich" in captured.out
+    assert "attempted: 2" in captured.out
+    assert "50%" in captured.out
+    halted_block = captured.out.split("halted:", 1)[1]
+    assert "ABA-2: (In Progress, 1)" in halted_block
+
+
 def test_cycle_with_two_files_merges_entries_for_completion_percent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

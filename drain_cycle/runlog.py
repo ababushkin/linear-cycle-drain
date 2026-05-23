@@ -20,6 +20,8 @@ Schema:
     {
       "cycle_id":               "<linear-cycle-uuid>",
       "cycle_duration_seconds": <float>,
+      "cycle_cost_usd":         <float>,
+      "cycle_tokens_cumulative": <int>,
       "entries":                [
         {
           "issue_identifier":   "ABA-NNN",
@@ -29,6 +31,20 @@ Schema:
           "final_linear_state": "Done" | "Todo" | ...,
           "worktree_path":      "<absolute path>",
           "halt_reason":        null | "<orchestrator stderr halt line>",
+          "duration_seconds":   <float>,
+          "model":              null | "<resolved model id>",
+          "usage":              null | {
+            "input_tokens":               <int>,
+            "output_tokens":              <int>,
+            "cache_creation_input_tokens": <int>,
+            "cache_read_input_tokens":    <int>,
+            "cumulative":                 <int>,
+            "peak_context":               <int>,
+          },
+          "cost_usd":           null | <float>,
+          "num_turns":          null | <int>,
+          "session_id":         null | "<uuid>",
+          "is_error":           null | <bool>,
         },
         ...
       ],
@@ -41,6 +57,21 @@ also written to stderr — both surfaces are produced by the same
 terminal values cannot drift. Non-last entries are
 ``null`` by construction: the orchestrator returns on first halt, so
 anything before the halt is a Done entry.
+
+The worker-usage fields (``model`` through ``is_error``) are populated
+from the spawned session's stream-json events — see ``worker.py``.
+Entries written before any session runs (pre-spawn resolution and
+setup-failure halts) carry ``null`` for ``model`` / ``usage`` /
+``cost_usd`` / ``num_turns`` / ``session_id`` / ``is_error``; every entry
+keeps the same key set. ``usage.cumulative`` is the billed-token total
+across turns; ``usage.peak_context`` is the largest single-turn context.
+These fields are additive — ``grade.py`` reads only ``cycle_id`` and
+``entries[].final_linear_state`` / ``exit_code``, so existing run logs
+without them grade unchanged.
+
+``cycle_cost_usd`` and ``cycle_tokens_cumulative`` are per-invocation
+totals over ``entries`` (entries with ``null`` cost or usage contribute
+zero), recomputed on every persist alongside ``cycle_duration_seconds``.
 
 ``cycle_duration_seconds`` is computed automatically on every persist as
 ``max(finished_at) - min(started_at)`` across ``entries`` (``0.0`` when
@@ -111,7 +142,19 @@ class RunLog:
         final_linear_state: str,
         worktree_path: str,
         halt_reason: str | None = None,
+        duration_seconds: float | None = None,
+        model: str | None = None,
+        usage: dict[str, int] | None = None,
+        cost_usd: float | None = None,
+        num_turns: int | None = None,
+        session_id: str | None = None,
+        is_error: bool | None = None,
     ) -> None:
+        if duration_seconds is None:
+            duration_seconds = (
+                datetime.fromisoformat(finished_at)
+                - datetime.fromisoformat(started_at)
+            ).total_seconds()
         self.entries.append(
             {
                 "issue_identifier": issue_identifier,
@@ -121,6 +164,13 @@ class RunLog:
                 "final_linear_state": final_linear_state,
                 "worktree_path": worktree_path,
                 "halt_reason": halt_reason,
+                "duration_seconds": duration_seconds,
+                "model": model,
+                "usage": usage,
+                "cost_usd": cost_usd,
+                "num_turns": num_turns,
+                "session_id": session_id,
+                "is_error": is_error,
             }
         )
         self._persist()
@@ -129,6 +179,8 @@ class RunLog:
         payload = {
             "cycle_id": self.cycle_id,
             "cycle_duration_seconds": self._cycle_duration_seconds(),
+            "cycle_cost_usd": self._cycle_cost_usd(),
+            "cycle_tokens_cumulative": self._cycle_tokens_cumulative(),
             "entries": self.entries,
         }
         self.path.write_text(json.dumps(payload, indent=2) + "\n")
@@ -139,3 +191,15 @@ class RunLog:
         starts = [datetime.fromisoformat(e["started_at"]) for e in self.entries]
         finishes = [datetime.fromisoformat(e["finished_at"]) for e in self.entries]
         return (max(finishes) - min(starts)).total_seconds()
+
+    def _cycle_cost_usd(self) -> float:
+        return sum(
+            e["cost_usd"] for e in self.entries if e.get("cost_usd") is not None
+        )
+
+    def _cycle_tokens_cumulative(self) -> int:
+        return sum(
+            e["usage"]["cumulative"]
+            for e in self.entries
+            if e.get("usage") is not None
+        )
