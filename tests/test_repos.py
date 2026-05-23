@@ -68,6 +68,18 @@ def test_load_raises_config_error_when_file_missing(tmp_path: Path) -> None:
         repos.load(missing)
 
 
+def test_missing_file_error_shows_actionable_shape(tmp_path: Path) -> None:
+    """ABA-233 bootstrap UX: a fresh user with no repos.yml gets the
+    missing path *and* the expected shape, not a bare 'not found'."""
+    missing = tmp_path / "nonexistent.yml"
+    with pytest.raises(repos.RepoConfigError) as exc:
+        repos.load(missing)
+    message = str(exc.value)
+    assert str(missing) in message
+    assert "repos:" in message
+    assert "docs/repos.example.yml" in message
+
+
 def test_load_raises_config_error_on_invalid_yaml(tmp_path: Path) -> None:
     config = tmp_path / "repos.yml"
     config.write_text("repos: [this is not balanced\n")

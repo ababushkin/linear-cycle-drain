@@ -6,10 +6,12 @@ issue's target repo is resolved from a ``repo:<name>`` label against
 from anywhere, not from inside a target repo. The ``grade`` subcommand
 (US-D / ABA-197) reads the run logs and prints a health read.
 
-Loads ``.env`` from the drain-cycle repo root before any module reads
-``os.environ`` — the CLI is run from arbitrary cwds, so the default
-``find_dotenv()`` walk would miss it. Shell-exported vars still win
-(``load_dotenv`` does not override by default).
+Secrets load before any module reads ``os.environ``, first hit wins:
+shell-exported vars → ``~/.drain-cycle/.env`` → the drain-cycle repo
+root ``.env`` (dev-checkout fallback, absent once installed as a uv
+tool). ``load_dotenv`` defaults to ``override=False``, so an
+already-set var always beats a later source and the shell always wins
+(ABA-233).
 
 ``repos.yml`` is validated eagerly at startup so a broken config halts
 exit 1 on stderr before any Linear traffic or run-log file is written
@@ -26,6 +28,20 @@ from . import grade, orchestrator, repos
 
 _REPO_ENV = Path(__file__).resolve().parent.parent / ".env"
 
+
+def _load_secrets() -> None:
+    """Populate ``os.environ`` from the first ``.env`` that defines each key.
+
+    ``~/.drain-cycle/.env`` sits beside ``repos.yml`` and the run logs,
+    so an installed tool finds its secret there. The repo-root ``.env``
+    is a dev-checkout fallback only — once installed as a uv tool the
+    package lives in an isolated env where that path has no ``.env``.
+    ``$HOME`` is resolved per call so tests can redirect it.
+    """
+    load_dotenv(Path.home() / ".drain-cycle" / ".env")
+    load_dotenv(_REPO_ENV)
+
+
 _USAGE = (
     "usage: drain-cycle              drain the current Linear cycle\n"
     "       drain-cycle grade        print health read from run logs\n"
@@ -34,7 +50,7 @@ _USAGE = (
 
 
 def main() -> None:
-    load_dotenv(_REPO_ENV)
+    _load_secrets()
     argv = sys.argv[1:]
     if not argv:
         try:

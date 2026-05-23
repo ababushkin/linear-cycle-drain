@@ -16,7 +16,7 @@ Read this section before installing — `drain-cycle` is deliberately not for ev
 
 ## Prerequisites
 
-- **Python 3.11+** — pinned to 3.12 via `mise.toml`. Install [`mise`](https://mise.jdx.dev/) first.
+- **[`uv`](https://docs.astral.sh/uv/) on `$PATH`** — the installer; it also fetches the pinned Python for the tool's isolated env, so you don't install Python yourself.
 - **`git` CLI** on `$PATH`.
 - **`claude` CLI** on `$PATH` — see the [Claude Code install docs](https://docs.claude.com/en/docs/claude-code/setup).
 - **Linear API key** with read/write on your Personal team. Generate one at <https://linear.app/settings/api>.
@@ -26,15 +26,23 @@ Read this section before installing — `drain-cycle` is deliberately not for ev
 
 ## Install
 
+Install with `uv` so the `drain-cycle` executable lands on `$PATH` in an isolated environment — no venv to activate, runs from any directory:
+
 ```bash
-git clone https://github.com/ababushkin/drain-cycle
-cd drain-cycle
-mise install                          # picks up mise.toml → Python 3.12
-pip install -e .                      # installs the `drain-cycle` CLI
-echo 'LINEAR_API_KEY=lin_api_…' > .env  # loaded automatically at CLI start
+uv tool install .                                          # from a local checkout
+uv tool install git+https://github.com/ababushkin/drain-cycle  # or straight from the repo
 ```
 
-`.env` lives at the drain-cycle repo root and is gitignored. If you'd rather export `LINEAR_API_KEY` in your shell rc, that still works and takes precedence over `.env`.
+`uv` installs the executable under `~/.local/bin`. If that isn't on your `$PATH`, run `uv tool update-shell` once. The CLI resolves each issue's target repo from its `repo:<name>` label, so the directory you run it from doesn't matter.
+
+Then set up `~/.drain-cycle/`, which holds everything the tool reads and writes (config, secret, run logs):
+
+```bash
+mkdir -p ~/.drain-cycle
+echo 'LINEAR_API_KEY=lin_api_…' > ~/.drain-cycle/.env
+```
+
+The key is read from the first source that defines it: a shell-exported `LINEAR_API_KEY` wins, then `~/.drain-cycle/.env`, then a `.env` at the repo root (a dev-checkout fallback the installed tool never sees). Export it in your shell rc instead of the file if you prefer.
 
 Create `~/.drain-cycle/repos.yml` mapping each label name to the repo's absolute path on disk:
 
@@ -45,12 +53,22 @@ repos:
   stock-review: /Users/you/src/stock-review
 ```
 
-A `~`-prefixed path inside the file is expanded against `$HOME`. A missing or malformed `repos.yml` halts the CLI before any Linear traffic — exit 1, message on stderr, no run-log entry written.
+A `~`-prefixed path inside the file is expanded against `$HOME`. A missing or malformed `repos.yml` halts the CLI before any Linear traffic — exit 1, message on stderr, no run-log entry written. See [`docs/repos.example.yml`](docs/repos.example.yml) for a copyable template.
 
-Verify the install:
+Verify the install from anywhere:
 
 ```bash
-drain-cycle --help     # any invocation that doesn't crash on import works
+cd /tmp && drain-cycle --help     # any invocation that doesn't crash on import works
+```
+
+### Developing on drain-cycle
+
+Working on the tool itself? Pin the dev Python and install editable so source edits take effect without reinstalling:
+
+```bash
+mise install                       # picks up mise.toml → Python 3.12
+uv tool install --editable .       # symlinks the checkout
+uv tool install --reinstall .      # or rebuild from scratch after a change
 ```
 
 ## Usage

@@ -1,0 +1,10 @@
+# Example ~/.drain-cycle/repos.yml
+#
+# Maps each `repo:<name>` Linear label to the absolute path of that repo
+# on disk. drain-cycle reads this to resolve where each cycle issue runs.
+# Copy to ~/.drain-cycle/repos.yml and edit the paths to match your machine.
+# A ~-prefixed path is expanded against $HOME.
+repos:
+  drain-cycle: /Users/you/src/drain-cycle
+  pde-skills:  /Users/you/src/pde-skills
+  stock-review: ~/src/stock-review

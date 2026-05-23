@@ -31,6 +31,14 @@ import yaml
 _CONFIG_DISPLAY = "~/.drain-cycle/repos.yml"
 _REPO_LABEL_PREFIX = "repo:"
 
+_MISSING_CONFIG_HINT = (
+    "create it mapping each repo: label to an absolute path, e.g.:\n\n"
+    "  repos:\n"
+    "    drain-cycle: /Users/you/src/drain-cycle\n"
+    "    pde-skills:  /Users/you/src/pde-skills\n\n"
+    "see docs/repos.example.yml for a template."
+)
+
 
 class RepoConfigError(RuntimeError):
     """``repos.yml`` is missing or malformed."""
@@ -85,7 +93,9 @@ def load(path: Path | None = None) -> Repos:
     if path is None:
         path = default_config_path()
     if not path.exists():
-        raise RepoConfigError(f"{_CONFIG_DISPLAY} not found at {path}")
+        raise RepoConfigError(
+            f"{_CONFIG_DISPLAY} not found at {path}\n{_MISSING_CONFIG_HINT}"
+        )
     try:
         data = yaml.safe_load(path.read_text())
     except yaml.YAMLError as exc:

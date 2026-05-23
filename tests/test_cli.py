@@ -12,9 +12,69 @@ writing any run-log) when the config is broken. That test sits below.
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from drain_cycle import cli, grade, orchestrator, repos
+
+_SECRET = "DRAIN_CYCLE_TEST_SECRET"
+
+
+def _write_env(directory: Path, value: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / ".env"
+    path.write_text(f"{_SECRET}={value}\n")
+    return path
+
+
+def test_load_secrets_reads_home_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ABA-233: an installed tool with no repo-root .env still finds the
+    secret in ~/.drain-cycle/.env."""
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv(_SECRET, raising=False)
+    monkeypatch.setattr(cli, "_REPO_ENV", tmp_path / "nonexistent" / ".env")
+    _write_env(tmp_path / ".drain-cycle", "from-home")
+
+    cli._load_secrets()
+
+    assert os.environ[_SECRET] == "from-home"
+
+
+def test_load_secrets_shell_var_wins_over_home_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shell export always beats the file (load_dotenv override=False)."""
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv(_SECRET, "from-shell")
+    monkeypatch.setattr(cli, "_REPO_ENV", tmp_path / "nonexistent" / ".env")
+    _write_env(tmp_path / ".drain-cycle", "from-home")
+
+    cli._load_secrets()
+
+    assert os.environ[_SECRET] == "from-shell"
+
+
+def test_load_secrets_home_env_wins_over_repo_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First hit wins: ~/.drain-cycle/.env is read before the repo-root
+    fallback, so it takes precedence when both define the key."""
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv(_SECRET, raising=False)
+    repo_env = _write_env(tmp_path / "repo", "from-repo")
+    monkeypatch.setattr(cli, "_REPO_ENV", repo_env)
+    _write_env(tmp_path / ".drain-cycle", "from-home")
+
+    cli._load_secrets()
+
+    assert os.environ[_SECRET] == "from-home"
 
 
 def _stub_no_op_orchestrator(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
