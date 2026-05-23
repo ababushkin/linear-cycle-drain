@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import linear, prompt, runlog, worktree
+from . import linear, model, prompt, runlog, worktree
 from .repos import RepoResolutionError, Repos
 
 _DONE_STATE_TYPE = "completed"
@@ -141,10 +141,11 @@ def run(repos: Repos) -> int:
             return 1
 
         agent_prompt = prompt.build(issue, worktree_path)
+        worker_model = model.resolve(issue)
 
         try:
             result = subprocess.run(
-                [*_CLAUDE_CMD, agent_prompt],
+                [*_CLAUDE_CMD, "--model", worker_model, agent_prompt],
                 cwd=worktree_path,
                 check=False,
                 timeout=_ISSUE_TIMEOUT_SECONDS,

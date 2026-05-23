@@ -139,6 +139,78 @@ def test_orchestrator_drains_every_issue_in_sorted_order(
     assert listed.count("worktree ") == 1
 
 
+def test_orchestrator_passes_resolved_model_to_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The model resolved from the issue's ``model:`` label reaches the
+    spawned command as ``--model <resolved>`` — default Sonnet when absent,
+    the labelled override otherwise."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    default_issue = _issue("ABA-DEF", priority=1, sort_order=1.0)
+    opus_issue = _issue("ABA-OPUS", priority=2, sort_order=2.0)
+    opus_issue["labels"] = ["repo:test-repo", "model:opus"]
+    raw_issues = [default_issue, opus_issue]
+
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    done_marker = tmp_path / "done-identifiers.txt"
+    argv_dir = tmp_path / "argv"
+    argv_dir.mkdir()
+
+    def fake_pending_issues(cycle_id: str) -> list[dict]:
+        completed = _completed_identifiers(done_marker)
+        return linear._sort_pending_issues(
+            [i for i in raw_issues if i["identifier"] not in completed]
+        )
+
+    def fake_get_issue(issue_id: str) -> dict:
+        issue = issues_by_id[issue_id]
+        if issue["identifier"] in _completed_identifiers(done_marker):
+            return {**issue, "state": {"type": "completed", "name": "Done"}}
+        return issue
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle")
+    monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+    monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
+
+    fake_claude = _write_argv_capturing_claude_script(tmp_path, done_marker, argv_dir)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
+    assert exit_code == 0
+
+    assert _model_arg(argv_dir / "ABA-DEF.txt") == "claude-sonnet-4-6"
+    assert _model_arg(argv_dir / "ABA-OPUS.txt") == "claude-opus-4-7"
+
+
+def _model_arg(argv_file: Path) -> str:
+    """Return the token following ``--model`` in a captured argv file."""
+    argv = argv_file.read_text().splitlines()
+    return argv[argv.index("--model") + 1]
+
+
+def _write_argv_capturing_claude_script(
+    tmp_path: Path, done_marker: Path, argv_dir: Path
+) -> Path:
+    """A ``claude -p`` stand-in that records its argv (one token per line)
+    to ``argv_dir/<identifier>.txt`` and marks the issue Done."""
+    script = tmp_path / "fake-claude-argv.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'id="$(basename "$PWD")"\n'
+        f': > "{argv_dir}/$id.txt"\n'
+        f'for a in "$@"; do printf "%s\\n" "$a" >> "{argv_dir}/$id.txt"; done\n'
+        f'printf "%s\\n" "$id" >> "{done_marker}"\n'
+    )
+    script.chmod(0o755)
+    return script
+
+
 def _completed_identifiers(marker: Path) -> set[str]:
     if not marker.exists():
         return set()

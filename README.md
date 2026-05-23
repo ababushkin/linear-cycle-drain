@@ -21,6 +21,7 @@ Read this section before installing — `drain-cycle` is deliberately not for ev
 - **`claude` CLI** on `$PATH` — see the [Claude Code install docs](https://docs.claude.com/en/docs/claude-code/setup).
 - **Linear API key** with read/write on your Personal team. Generate one at <https://linear.app/settings/api>.
 - **A `repo:<name>` Linear label on every cycle issue.** `drain-cycle` resolves the target repo per issue from this label — an unlabelled issue halts the run before any worktree is created. Create the labels at the team level in Linear (Settings → Labels) using the exact names your `repos.yml` keys use.
+- **An optional `model:<alias>` Linear label.** Workers default to `claude-sonnet-4-6` — the cost-efficient default for unattended drains. Add `model:opus` (or `model:haiku`, or a full model id like `model:claude-opus-4-7`) to an issue that warrants a different model; that issue's worker runs on it. Missing, unknown, or conflicting labels fall back to the default — model resolution never halts a run.
 - **A `~/.drain-cycle/repos.yml` config file** mapping each `<name>` to the absolute path of the repo on disk (see Install below).
 - **Each target repo must gitignore `.worktrees/`.** `drain-cycle` creates `.worktrees/<issue-identifier>/` inside the target repo per spawned session; without an ignore rule the spawned `git add` calls can sweep those paths into commits. A one-line `.gitignore` entry per repo is enough.
 
