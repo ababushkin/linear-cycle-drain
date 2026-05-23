@@ -1,0 +1,74 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "03ceb7484945",
+  "session_id": "7ced9f48-65e3-471b-a25d-f3c0956ce6db",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-23T07:26:18.615013Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "drain_cycle/cli.py",
+    "drain_cycle/grade.py",
+    "drain_cycle/linear.py",
+    "drain_cycle/orchestrator.py",
+    "drain_cycle/repos.py",
+    "drain_cycle/runlog.py",
+    "tests/test_cli.py",
+    "tests/test_grade_across_cycles.py",
+    "tests/test_grade_per_cycle.py",
+    "tests/test_grade_verdict.py",
+    "tests/test_grade_walking_skeleton.py",
+    "tests/test_linear_pending_issues.py",
+    "tests/test_linear_set_state.py",
+    "tests/test_linear_sort.py",
+    "tests/test_orchestrator_halt.py",
+    "tests/test_orchestrator_iteration.py",
+    "tests/test_orchestrator_multi_repo.py",
+    "tests/test_orchestrator_runlog.py",
+    "tests/test_orchestrator_set_state.py",
+    "tests/test_prompt.py",
+    "tests/test_repos.py",
+    "tests/test_runlog.py"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "f1767eb80d76",
+  "token_usage": {
+    "input_tokens": 244,
+    "cache_creation_tokens": 280723,
+    "cache_read_tokens": 14460180,
+    "output_tokens": 56223,
+    "api_call_count": 122
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-23T07:26:18.595763Z",
+    "agent_lines": 153,
+    "agent_removed": 163,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 153,
+    "total_lines_changed": 316,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 153,
+      "agent_lines_removed": 163
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+research the codebase and find references to linear tickets/issues sprinkled throughout the comments
+these aren't useful and i want them removed - or if there's valuable business logic context - inline them
