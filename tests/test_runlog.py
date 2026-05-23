@@ -163,6 +163,23 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
     assert '"halt_reason": null' in log.path.read_text()
 
 
+def test_debug_path_sits_beside_run_log_named_per_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The opt-in debug-capture path is a sibling of the run log, suffixed
+    with the issue identifier so each session's capture is distinct and the
+    run-start timestamp keeps re-runs from clobbering it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    log = runlog.RunLog(cycle_id="stub-cycle")
+    debug = log.debug_path("ABA-238")
+
+    assert debug.parent == log.path.parent
+    assert debug.name == f"{log.path.stem}-ABA-238.debug.log"
+    # Distinct per issue, so concurrent-issue captures never collide.
+    assert log.debug_path("ABA-1") != log.debug_path("ABA-2")
+
+
 def test_two_runlogs_same_cycle_id_write_to_distinct_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

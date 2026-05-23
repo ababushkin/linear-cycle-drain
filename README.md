@@ -155,6 +155,18 @@ A key you omit keeps its default; a number overrides it; `null` turns that guard
 
 Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, per-issue token usage and cost, and `halt_reason` on the halting entry. The file also carries per-cycle totals (`cycle_tokens_cumulative`, `cycle_cost_usd`, `cycle_duration_seconds`) and a `cycle_halt_reason` when a cycle-wide cap stopped the run. Use it to gauge how cleanly your runs complete and what they cost — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
 
+### Debug capture
+
+Workers spawn in an isolated worktree, whose environment differs from an interactive session at the repo root — most notably, **project-scoped hooks registered in a gitignored `.claude/settings.json` (e.g. entire.io's checkpointing) don't load inside the worktree.** [`docs/design-decisions.md`](docs/design-decisions.md) §10 documents why.
+
+To see exactly which settings sources, plugins, MCP servers, and hooks a worker initialised, run with debug capture on:
+
+```bash
+DRAIN_CYCLE_DEBUG=1 drain-cycle
+```
+
+Each spawned session then gets `claude`'s `--debug-file`, writing one `<cycle-id>-<run-timestamp>-<issue>.debug.log` per issue beside the run log in `~/.drain-cycle/runs/`. It is off by default — a one-shot investigative switch, not steady-state overhead. Debug output goes to the file, so it doesn't disturb the token-usage stream the run log records. These captures are verbose and aren't pruned automatically (like the run logs themselves); delete them by hand when you're done investigating.
+
 ## Design
 
 Design decisions, alternatives considered, and deliberate out-of-scope choices live in [`docs/design-decisions.md`](docs/design-decisions.md).

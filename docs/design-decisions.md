@@ -2,7 +2,7 @@
 
 Design rationale for `drain-cycle`. Read this before making architectural changes — `AGENTS.md` points here.
 
-Nine decisions are recorded so a future reader doesn't have to reverse-engineer them from the code. ADRs would be heavier than this tool needs.
+Ten decisions are recorded so a future reader doesn't have to reverse-engineer them from the code. ADRs would be heavier than this tool needs.
 
 ## 1. The spawned agent updates Linear itself
 
@@ -121,3 +121,41 @@ Before this, the only ceiling on a worker was a 3600s wall-clock timeout, and th
 - *CLI flags to override limits per invocation.* Deferred. The acceptance criteria require only defaults + `limits.yml`, and `cli.main` is a deliberately minimal exact-match dispatcher (decision in `cli.py`); adding an argument parser to thread per-run overrides is scope the single operator can cover by editing `limits.yml`. Revisit if a use case for one-off overrides appears.
 - *Kill on the cycle cap mid-stream (pass cycle-so-far totals into the worker).* Rejected as unnecessary: the per-issue cap (8M) is below the cycle cap (30M), so a single issue can't cross the cycle cap before crossing its own; checking between issues catches the aggregate case without coupling the worker to cycle state.
 - *A separate hardcoded outer timeout kept alongside the configurable caps.* Rejected — two time concepts where one suffices (see above).
+
+## 10. Headless workers lose project-scoped hooks; the cause is named, not yet fixed
+
+The operator noticed entire.io's checkpointing didn't take effect during a headless drain. The hypothesis was that the worker's worktree cwd (`.worktrees/<id>`) diverges from an interactive session at the repo root. A reproduction run confirmed the divergence and sharpened the cause — and this round names the constraint rather than fixing it (observability-first: no blind fix to hook/plugin loading).
+
+**What was observed (claude 2.1.150).** Running `claude -p --debug-file <path>` from the repo root vs. from a fresh `git worktree` of the same repo, then diffing the debug logs:
+
+| | Repo root | Worktree |
+|---|---|---|
+| Settings files watched | user `~/.claude/settings.json` + **project** `.claude/settings.json` + `.claude/settings.local.json` | **user only** |
+| Project `.claude/settings.json` | loaded | "Broken symlink or missing file encountered" |
+| entire.io hooks | SessionStart + SessionEnd fire ("Entire CLI will link this conversation to your next commit") | **absent — zero references** |
+| User-scoped plugins (crit, hookify, agent-skills, security-guidance) | "Registered 7 hooks from 15 plugins" | **identical: "Registered 7 hooks from 15 plugins"** |
+
+**The cause is project-scoped registration in a gitignored file — not cwd alone, and not plugins generally.** entire registers its hooks in the project-scoped `.claude/settings.json`. That file is gitignored (`.gitignore` ends with `.claude`). A `git worktree` is a fresh checkout of *tracked* files only, and git reports the worktree directory as its own `--show-toplevel`, so Claude Code resolves the project root to the worktree and finds no `.claude/` there. User-scoped plugins and MCP servers — registered under `~/.claude/` — are cwd-independent and load identically in both, which is why the symptom looked like "some plugins" rather than "all hooks": only the project-scoped ones drop out. The original hypothesis (worktree cwd) was right that cwd is involved, but the operative mechanism is the gitignored project-settings file, not cwd by itself; were `.claude/settings.json` tracked, the worktree checkout would carry it.
+
+**Reproduction step (one-shot).** From a target repo with project-scoped hooks registered in `.claude/settings.json`:
+
+```bash
+# Repo root — interactive-equivalent project root
+claude -p --debug-file /tmp/root.debug.log --model claude-sonnet-4-6 \
+  --max-budget-usd 0.50 "Reply with exactly: ok"
+
+# Fresh worktree — the worker's actual cwd
+git worktree add -b repro .worktrees/repro main
+( cd .worktrees/repro && claude -p --debug-file /tmp/worktree.debug.log \
+    --model claude-sonnet-4-6 --max-budget-usd 0.50 "Reply with exactly: ok" )
+git worktree remove --force .worktrees/repro && git branch -D repro
+
+# Diff the loaded settings/hooks. The worktree run is missing the project
+# settings file and any hook registered in it.
+grep -iE 'settings.json|Registered .* hooks|<your-plugin-name>' /tmp/root.debug.log
+grep -iE 'settings.json|Registered .* hooks|<your-plugin-name>' /tmp/worktree.debug.log
+```
+
+The same capture is wired into the worker as an opt-in: `DRAIN_CYCLE_DEBUG=1 drain-cycle` passes `--debug-file` to every spawned session, landing one `<run-log-stem>-<issue>.debug.log` per issue beside the run log in `~/.drain-cycle/runs/`. It is off by default — the diagnostic is for one-shot investigation, not steady-state overhead, and debug output goes to the file rather than stderr so the usage parser's stream is unaffected.
+
+**Open question — fix it, or accept it?** A fix would be cheap (any of: track `.claude/settings.json` so worktrees inherit it; register entire at the user scope; copy/symlink the repo's `.claude/` into each worktree at spawn; or pass `--settings <repo>/.claude/settings.json` to the worker). The reason none ships yet is upstream of the mechanism: it isn't obvious headless checkpointing is even *wanted*. entire's value is linking a conversation to the commit it produced — but a `drain-cycle` worktree is a throwaway branch removed on Done. Linking a session to a branch that's about to be deleted may be pointless or actively confusing. Until the operator decides whether project-scoped hooks *should* run inside throwaway worktrees, the divergence is a documented constraint, not a defect: workers run with user-scoped context only, and anything a target repo registers solely in its gitignored `.claude/` will not be present.

@@ -331,3 +331,48 @@ def test_run_issue_omits_max_budget_when_cost_limit_none(tmp_path: Path) -> None
 
     argv = argv_file.read_text().splitlines()
     assert "--max-budget-usd" not in argv
+
+
+def test_run_issue_passes_debug_file_flag(tmp_path: Path) -> None:
+    """Opt-in debug capture hands the path to ``claude`` as ``--debug-file``,
+    and the prompt stays the trailing positional after the value-taking flag."""
+    argv_file = tmp_path / "argv.txt"
+    script = _argv_capturing_claude(tmp_path, argv_file)
+    debug_path = tmp_path / "run-ABA-1.debug.log"
+
+    worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="THE-PROMPT",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=None,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+        debug_file=debug_path,
+    )
+
+    argv = argv_file.read_text().splitlines()
+    assert "--debug-file" in argv
+    assert argv[argv.index("--debug-file") + 1] == str(debug_path)
+    assert argv[-1] == "THE-PROMPT"
+
+
+def test_run_issue_omits_debug_file_when_none(tmp_path: Path) -> None:
+    """Debug capture off (the default) passes no ``--debug-file``."""
+    argv_file = tmp_path / "argv.txt"
+    script = _argv_capturing_claude(tmp_path, argv_file)
+
+    worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="THE-PROMPT",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=None,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+    )
+
+    argv = argv_file.read_text().splitlines()
+    assert "--debug-file" not in argv

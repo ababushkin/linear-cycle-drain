@@ -186,6 +186,17 @@ class RunLog:
         )
         self._persist()
 
+    def debug_path(self, issue_identifier: str) -> Path:
+        """Path for one issue's opt-in ``--debug-file`` capture, beside the log.
+
+        Named ``<run-log-stem>-<issue-identifier>.debug.log`` so each issue's
+        startup diagnostics sit next to the run log they belong to and the
+        run-start timestamp keeps re-runs from clobbering a prior capture.
+        Only written when debug capture is enabled — see ``orchestrator.run``
+        and ``docs/design-decisions.md`` §10.
+        """
+        return self.path.with_name(f"{self.path.stem}-{issue_identifier}.debug.log")
+
     def set_cycle_halt(self, reason: str) -> None:
         """Record why a cycle-wide cap stopped the run, and persist.
 

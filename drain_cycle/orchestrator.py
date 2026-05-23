@@ -8,6 +8,7 @@ halt string — emitted both on stderr and into the run-log entry's
 """
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,12 @@ from .repos import RepoResolutionError, Repos
 _DONE_STATE_TYPE = "completed"
 _IN_PROGRESS_STATE_NAME = "In Progress"
 _CLAUDE_CMD = ["claude", "-p", "--dangerously-skip-permissions"]
+_DEBUG_ENV_VAR = "DRAIN_CYCLE_DEBUG"
+"""Opt-in switch for per-issue ``--debug-file`` capture. Any non-empty value
+turns it on; the worker then writes each session's startup diagnostics
+(settings sources, plugins, MCP servers, hooks) beside the run log. Off by
+default — the diagnostic exists for one-shot investigation, not steady state.
+See ``docs/design-decisions.md`` §10."""
 _UNRESOLVED_WORKTREE_DISPLAY = "<unresolved>"
 """Worktree-path placeholder for the pre-spawn resolution-halt path.
 No path has been chosen yet — the issue couldn't be mapped to a target
@@ -87,9 +94,21 @@ def _worker_log_fields(result: worker.WorkerResult) -> dict[str, object]:
     }
 
 
+def _debug_enabled() -> bool:
+    """Whether per-issue ``--debug-file`` capture is switched on.
+
+    Read from the environment (``os.environ`` already carries any
+    ``~/.drain-cycle/.env`` value loaded at CLI startup), so the operator
+    turns it on for one investigative run with ``DRAIN_CYCLE_DEBUG=1
+    drain-cycle`` and leaves it off otherwise.
+    """
+    return bool(os.environ.get(_DEBUG_ENV_VAR))
+
+
 def run(repos: Repos, limits: Limits | None = None) -> int:
     if limits is None:
         limits = Limits()
+    debug = _debug_enabled()
     cycle_id = linear.current_cycle_id()
     log = runlog.RunLog(cycle_id=cycle_id)
     issues = linear.pending_issues(cycle_id)
@@ -157,6 +176,13 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
         agent_prompt = prompt.build(issue, worktree_path)
         worker_model = model.resolve(issue)
 
+        debug_file = log.debug_path(identifier) if debug else None
+        if debug_file is not None:
+            print(
+                f"drain-cycle: {identifier} debug capture → {debug_file}",
+                file=sys.stderr,
+            )
+
         result = worker.run_issue(
             claude_cmd=_CLAUDE_CMD,
             model=worker_model,
@@ -165,6 +191,7 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
             token_limit=limits.per_issue_tokens,
             time_limit_seconds=limits.per_issue_seconds,
             cost_limit_usd=limits.per_issue_cost_usd,
+            debug_file=debug_file,
         )
         finished_at = _now_iso()
 

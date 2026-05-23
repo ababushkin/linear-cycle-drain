@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from drain_cycle import linear, orchestrator, repos
+from drain_cycle import linear, orchestrator, repos, runlog
 
 
 def _issue(
@@ -186,6 +186,77 @@ def test_orchestrator_passes_resolved_model_to_worker(
 
     assert _model_arg(argv_dir / "ABA-DEF.txt") == "claude-sonnet-4-6"
     assert _model_arg(argv_dir / "ABA-OPUS.txt") == "claude-opus-4-7"
+
+
+def _captured_argv_for_one_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, identifier: str
+) -> list[str]:
+    """Drain a single-issue cycle through a real worktree + argv-capturing
+    fake ``claude``, returning the spawned argv. ``HOME`` / cwd / Linear
+    stubs are wired here so the debug-capture tests only assert on the argv;
+    the caller sets ``DRAIN_CYCLE_DEBUG`` (or not) before calling."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    issue = _issue(identifier, priority=1, sort_order=1.0)
+    raw_issues = [issue]
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    done_marker = tmp_path / "done-identifiers.txt"
+    argv_dir = tmp_path / "argv"
+    argv_dir.mkdir()
+
+    def fake_pending_issues(cycle_id: str) -> list[dict]:
+        completed = _completed_identifiers(done_marker)
+        return [i for i in raw_issues if i["identifier"] not in completed]
+
+    def fake_get_issue(issue_id: str) -> dict:
+        issue = issues_by_id[issue_id]
+        if issue["identifier"] in _completed_identifiers(done_marker):
+            return {**issue, "state": {"type": "completed", "name": "Done"}}
+        return issue
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle")
+    monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+    monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
+
+    fake_claude = _write_argv_capturing_claude_script(tmp_path, done_marker, argv_dir)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    assert orchestrator.run(repos.Repos(mapping={"test-repo": repo})) == 0
+    return (argv_dir / f"{identifier}.txt").read_text().splitlines()
+
+
+def test_orchestrator_debug_capture_passes_debug_file_beside_runlog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``DRAIN_CYCLE_DEBUG`` set, the spawned session gets a
+    ``--debug-file`` whose path is a sibling of the run log, named per
+    issue and timestamped with the run."""
+    monkeypatch.setenv(orchestrator._DEBUG_ENV_VAR, "1")
+
+    argv = _captured_argv_for_one_issue(tmp_path, monkeypatch, "ABA-DBG")
+
+    assert "--debug-file" in argv
+    debug_arg = Path(argv[argv.index("--debug-file") + 1])
+    assert debug_arg.parent == runlog.runs_dir()
+    assert debug_arg.name.startswith("stub-cycle-")
+    assert debug_arg.name.endswith("-ABA-DBG.debug.log")
+
+
+def test_orchestrator_omits_debug_file_when_capture_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default (no ``DRAIN_CYCLE_DEBUG``): no ``--debug-file`` reaches the
+    spawned session."""
+    monkeypatch.delenv(orchestrator._DEBUG_ENV_VAR, raising=False)
+
+    argv = _captured_argv_for_one_issue(tmp_path, monkeypatch, "ABA-NODBG")
+
+    assert "--debug-file" not in argv
 
 
 def _model_arg(argv_file: Path) -> str:

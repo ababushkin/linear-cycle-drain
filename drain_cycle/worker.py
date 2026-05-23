@@ -128,6 +128,7 @@ def run_issue(
     time_limit_seconds: float | None,
     cost_limit_usd: float | None,
     passthrough: TextIO | None = None,
+    debug_file: Path | None = None,
     poll_interval_seconds: float = _POLL_INTERVAL_SECONDS,
 ) -> WorkerResult:
     """Spawn one streaming ``claude -p`` session and return its usage.
@@ -145,13 +146,22 @@ def run_issue(
     hook stderr) are written to ``passthrough`` (default ``sys.stderr``) so
     the operator still sees diagnostics; recognised JSON events are
     consumed by the usage parser.
+
+    ``debug_file``, when set, is passed to ``claude`` as ``--debug-file`` so
+    the session writes its startup diagnostics — which settings sources,
+    plugins, MCP servers, and hooks initialised — to that path. Debug logs
+    go to the file, not stderr, so the merged stream the usage parser reads
+    is unaffected. Opt-in only; ``None`` (the default) passes no flag and the
+    session behaves exactly as before. See ``docs/design-decisions.md`` §10.
     """
     # The prompt is the trailing positional; it must follow the value-taking
-    # ``--model`` / ``--max-budget-usd`` options, not sit between an option
-    # and its value.
+    # ``--model`` / ``--max-budget-usd`` / ``--debug-file`` options, not sit
+    # between an option and its value.
     argv = [*claude_cmd, *_STREAM_FLAGS, "--model", model]
     if cost_limit_usd is not None:
         argv += ["--max-budget-usd", f"{cost_limit_usd:g}"]
+    if debug_file is not None:
+        argv += ["--debug-file", str(debug_file)]
     argv.append(prompt)
     sink = passthrough if passthrough is not None else sys.stderr
     accumulator = _UsageAccumulator()
