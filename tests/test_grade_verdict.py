@@ -1,8 +1,7 @@
-"""Verdict-section tests for ``drain-cycle grade`` (Task 4 / ABA-221).
+"""Verdict-section tests for ``drain-cycle grade``.
 
-Pins the HEALTHY / WATCH / CONCERNING banding per ABA-197 acceptance.
-No project-specific reminders are baked into the output (ABA-197
-out-of-scope clause).
+Pins the HEALTHY / WATCH / CONCERNING banding. No project-specific
+reminders are baked into the output.
 """
 from __future__ import annotations
 
@@ -95,9 +94,9 @@ def test_verdict_label_matches_band(
 def test_verdict_output_carries_no_project_specific_reminder(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ABA-197 out-of-scope clause: project-specific kill-condition strings
-    or reminders must not be baked into the CLI output. The verdict is a
-    general health band; interpretation belongs to the operator."""
+    """Project-specific kill-condition strings or reminders must not be
+    baked into the CLI output. The verdict is a general health band;
+    interpretation belongs to the operator."""
     runs_dir = tmp_path / "runs"
     _write_cycle(
         runs_dir,

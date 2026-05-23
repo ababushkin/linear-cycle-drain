@@ -3,7 +3,7 @@
 The function under test is pure (takes a list, returns a list), so these
 tests construct stub Linear issue dicts directly rather than mocking the
 GraphQL transport. The fetch wrapper ``pending_issues`` is a thin shim over
-``_sort_pending_issues`` and is exercised end-to-end in Task 6 / ABA-203.
+``_sort_pending_issues`` and is exercised end-to-end separately.
 """
 from drain_cycle.linear import _sort_pending_issues
 

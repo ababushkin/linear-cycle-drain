@@ -1,4 +1,4 @@
-"""Per-issue target-repo resolution (ABA-232).
+"""Per-issue target-repo resolution.
 
 The orchestrator used to be single-repo by construction: every worktree
 landed under ``Path.cwd()``. Cycles in this workspace span multiple repos

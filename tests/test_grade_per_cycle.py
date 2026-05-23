@@ -1,8 +1,8 @@
-"""Per-cycle section tests for ``drain-cycle grade`` (Task 2 / ABA-219).
+"""Per-cycle section tests for ``drain-cycle grade``.
 
-Pins the four facts ABA-197 acceptance requires in the per-cycle
-section: cycle_id, attempted count, integer completion %, and halted
-entries rendered as ``<identifier>: (<state>, <exit_code>)``.
+Pins the four facts the per-cycle section must report: cycle_id,
+attempted count, integer completion %, and halted entries rendered as
+``<identifier>: (<state>, <exit_code>)``.
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def test_per_cycle_section_renders_four_required_facts(
 def test_walking_skeleton_happy_path_still_prints_cycle_id_and_exits_zero(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ABA-219 explicitly requires Task 1's happy path to stay green."""
+    """The walking-skeleton happy path must stay green."""
     runs_dir = tmp_path / "runs"
     _write_run_log(
         runs_dir,
@@ -126,7 +126,7 @@ def test_per_cycle_sections_ordered_chronologically_by_earliest_filename(
 def test_cycle_with_two_files_merges_entries_for_completion_percent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ABA-230 fallout: one cycle, two files, merged on cycle_id."""
+    """One cycle, two files, merged on cycle_id."""
     runs_dir = tmp_path / "runs"
     _write_run_log(
         runs_dir,

@@ -1,7 +1,7 @@
-"""Orchestrator-writes-runlog integration test (Task 1 / ABA-215).
+"""Orchestrator-writes-runlog integration test.
 
-Pins that ``orchestrator.run()`` produces the on-disk artefact US-C / ABA-196
-specifies — one entry per attempted issue, in pick order, with all six
+Pins that ``orchestrator.run()`` produces the on-disk run-log artefact
+— one entry per attempted issue, in pick order, with all six
 required fields populated correctly on the happy path, and the top-level
 ``cycle_duration_seconds`` derived from the spanned timestamps.
 
@@ -98,7 +98,7 @@ def test_orchestrator_writes_runlog_with_one_entry_per_successful_issue(
     exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
     assert exit_code == 0
 
-    # Per-run filename (ABA-230): one file per drain-cycle invocation,
+    # Per-run filename: one file per drain-cycle invocation,
     # ``<cycle-id>-<run-timestamp>.json`` — glob to locate it.
     runs_dir = tmp_path / ".drain-cycle" / "runs"
     log_files = list(runs_dir.glob("stub-cycle-id-*.json"))
@@ -133,7 +133,7 @@ def test_orchestrator_writes_runlog_with_one_entry_per_successful_issue(
         assert set(entry.keys()) == required_keys
         assert entry["final_linear_state"] == "Done"
         assert entry["exit_code"] == 0
-        # Done entries carry halt_reason=null (ABA-213): the orchestrator
+        # Done entries carry halt_reason=null: the orchestrator
         # only populates it on the halt branch.
         assert entry["halt_reason"] is None
         # ISO 8601 round-trip — fromisoformat raises on garbage.

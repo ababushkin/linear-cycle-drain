@@ -1,4 +1,4 @@
-"""Tests for ``linear.pending_issues`` projection (ABA-232).
+"""Tests for ``linear.pending_issues`` projection.
 
 The wire shape from Linear is ``labels { nodes { name } }`` — a nested
 GraphQL connection. ``pending_issues`` flattens it to a plain

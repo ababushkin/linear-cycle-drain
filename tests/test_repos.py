@@ -1,4 +1,4 @@
-"""Tests for ``drain_cycle.repos`` (ABA-232).
+"""Tests for ``drain_cycle.repos``.
 
 Two distinct exception types must remain distinct: ``RepoConfigError``
 is the startup-time gate (CLI exits 1 before any Linear traffic);
@@ -69,7 +69,7 @@ def test_load_raises_config_error_when_file_missing(tmp_path: Path) -> None:
 
 
 def test_missing_file_error_shows_actionable_shape(tmp_path: Path) -> None:
-    """ABA-233 bootstrap UX: a fresh user with no repos.yml gets the
+    """Bootstrap UX: a fresh user with no repos.yml gets the
     missing path *and* the expected shape, not a bare 'not found'."""
     missing = tmp_path / "nonexistent.yml"
     with pytest.raises(repos.RepoConfigError) as exc:

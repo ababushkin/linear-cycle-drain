@@ -6,9 +6,9 @@ else → usage on stderr + exit 2. The behaviour guarded against is the
 old fall-through where a misspelled subcommand silently triggered a
 real cycle drain.
 
-ABA-232 added a fifth path: zero-arg must first eagerly load
-``repos.yml`` and exit 1 (without invoking the orchestrator, without
-writing any run-log) when the config is broken. That test sits below.
+A fifth path: zero-arg must first eagerly load ``repos.yml`` and exit 1
+(without invoking the orchestrator, without writing any run-log) when
+the config is broken. That test sits below.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _write_env(directory: Path, value: str) -> Path:
 def test_load_secrets_reads_home_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ABA-233: an installed tool with no repo-root .env still finds the
+    """An installed tool with no repo-root .env still finds the
     secret in ~/.drain-cycle/.env."""
     monkeypatch.setattr(os, "environ", dict(os.environ))
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -192,7 +192,7 @@ def forbid_grade(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_zero_arg_invocation_eagerly_validates_repos_yml(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ABA-232: a broken/missing ``repos.yml`` halts the zero-arg
+    """A broken/missing ``repos.yml`` halts the zero-arg
     invocation before any orchestrator call — no Linear traffic, no
     run-log file, exit 1 on stderr. Stubs orchestrator with a tripwire
     so a regression that defers validation until after the orchestrator

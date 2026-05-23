@@ -1,6 +1,6 @@
-"""Walking-skeleton tests for ``drain-cycle grade`` (Task 1 / ABA-217).
+"""Walking-skeleton tests for ``drain-cycle grade``.
 
-Pins the two exit paths defined in the ticket: empty/missing runs dir
+Pins the two exit paths: empty/missing runs dir
 gives a clear stderr message and non-zero exit; one well-formed fixture
 file gives exit 0 with its ``cycle_id`` on stdout. Later sub-issues
 extend the output without breaking these guarantees.

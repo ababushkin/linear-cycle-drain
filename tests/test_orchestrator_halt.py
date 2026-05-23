@@ -1,16 +1,15 @@
-"""Halt-on-not-Done test for the orchestrator (Task 5 / ABA-202).
+"""Halt-on-not-Done test for the orchestrator.
 
-Task 3 (ABA-200) added the iteration loop and a minimal non-Done branch that
-returns ``1`` without removing the worktree. This test pins that contract:
+The iteration loop has a minimal non-Done branch that returns ``1`` without
+removing the worktree. This test pins that contract:
 if the spawned session exits without flipping the issue to Done, the
 orchestrator must (a) exit non-zero, (b) leave the worktree on disk so the
 operator can inspect it, and (c) not touch any subsequent issue.
 
-The second test in this file (Task 2 / ABA-216) pins the halt-path slice
-of US-C: the run-log artefact must contain exactly one entry for the
-halted issue, with `final_linear_state` reflecting the non-Done state
-the agent left it in — so KR1 grading sees a halted attempt rather than
-a missing one.
+The second test in this file pins the halt-path slice of the run-log
+artefact: it must contain exactly one entry for the halted issue, with
+`final_linear_state` reflecting the non-Done state the agent left it in
+— so KR1 grading sees a halted attempt rather than a missing one.
 
 Substitution choices mirror ``test_orchestrator_iteration.py``: real git
 repo, in-process Linear stub via attribute monkey-patching, fake ``claude``
@@ -115,8 +114,8 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
 
     assert exit_code != 0
     # Loop bailed before touching the second issue. The first id may be
-    # re-fetched more than once (initial refresh + post-revert refresh per
-    # ABA-229); the load-bearing invariant is the second issue is absent.
+    # re-fetched more than once (initial refresh + post-revert refresh);
+    # the load-bearing invariant is the second issue is absent.
     assert get_issue_calls
     assert second["id"] not in get_issue_calls
     # Second issue's stub state is unchanged.
@@ -128,7 +127,7 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
     second_worktree = repo / ".worktrees" / second["identifier"]
     assert not second_worktree.exists()
 
-    # Spec'd halt UX (US-B / ABA-212): a single line on stderr starting with
+    # Spec'd halt UX: a single line on stderr starting with
     # `Halt: ` carrying issue identifier, final state name, and the absolute
     # worktree path the operator must `cd` to. The `Halt:` token is the
     # unique grep anchor — no other stderr line on either branch starts
@@ -159,14 +158,13 @@ def _write_fake_claude_script(tmp_path: Path) -> Path:
 def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Halt-path slice of US-C (Task 2 / ABA-216).
+    """Halt-path slice of the run-log artefact.
 
     The run-log file must contain exactly one entry — for the halted
     issue — with `final_linear_state` matching the non-Done state name
     the agent left it in. The second issue must be absent from entries
     (never attempted) and absent from disk (worktree never created).
-    The halted issue's worktree must remain preserved (existing ABA-202
-    contract).
+    The halted issue's worktree must remain preserved.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -199,7 +197,7 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
     exit_code = orchestrator.run(_stub_repos(repo))
     assert exit_code != 0
 
-    # Per-run filename (ABA-230): one file per drain-cycle invocation,
+    # Per-run filename: one file per drain-cycle invocation,
     # ``<cycle-id>-<run-timestamp>.json`` — glob to locate it.
     runs_dir = tmp_path / ".drain-cycle" / "runs"
     log_files = list(runs_dir.glob("stub-cycle-id-*.json"))
@@ -238,7 +236,7 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
     assert entry["final_linear_state"] != "Done"
     assert entry["worktree_path"] == str(repo / ".worktrees" / first["identifier"])
 
-    # halt_reason equals the stderr halt line exactly (ABA-213) — both
+    # halt_reason equals the stderr halt line exactly — both
     # surfaces come from the same orchestrator._halt_message helper, so
     # the on-disk explanation cannot drift from what the operator saw at
     # halt time.
@@ -246,7 +244,7 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
     (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
     assert entry["halt_reason"] == halt_line
     # And the halt line carries the identifier, state name, and absolute
-    # worktree path (US-B / ABA-212 spec'd shape).
+    # worktree path (spec'd shape).
     assert first["identifier"] in halt_line
     assert first["state"]["name"] in halt_line
     assert str(repo / ".worktrees" / first["identifier"]) in halt_line
@@ -258,7 +256,7 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
         e["issue_identifier"] != second["identifier"] for e in payload["entries"]
     )
 
-    # Halted worktree preserved (existing ABA-202 contract).
+    # Halted worktree preserved.
     assert (repo / ".worktrees" / first["identifier"]).is_dir()
 
 
@@ -320,7 +318,7 @@ def test_orchestrator_records_halt_when_setup_raises_before_spawn(
     assert entry["issue_identifier"] == first["identifier"]
     # Final Linear state is the pre-failure state — set_state never landed.
     assert entry["final_linear_state"] == first["state"]["name"]
-    # halt_reason carries the same string emitted to stderr (US-B / ABA-213).
+    # halt_reason carries the same string emitted to stderr.
     stderr_lines = capsys.readouterr().err.splitlines()
     (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
     assert entry["halt_reason"] == halt_line
@@ -362,8 +360,8 @@ def test_orchestrator_records_halt_when_claude_subprocess_times_out(
     issues_by_id = {i["id"]: i for i in raw_issues}
 
     def fake_get_issue(issue_id: str) -> dict:
-        # After ABA-229 the timeout halt path reverts state and refreshes
-        # — return the original Todo state so the refresh sees the revert.
+        # The timeout halt path reverts state and refreshes — return the
+        # original Todo state so the refresh sees the revert.
         return issues_by_id[issue_id]
 
     monkeypatch.setattr(linear, "current_cycle_id", fake_current_cycle_id)
@@ -405,10 +403,10 @@ def test_orchestrator_records_halt_when_claude_subprocess_times_out(
 def test_orchestrator_reverts_state_on_timeout_halt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ABA-229 AC1: on spawn-timeout halt, the orchestrator must revert the
-    issue's state back to the pre-halt state name captured from the cycle
-    query — so a re-run picks it up again rather than silently skipping
-    it (the ABA-227 silent-skip case).
+    """On spawn-timeout halt, the orchestrator must revert the issue's state
+    back to the pre-halt state name captured from the cycle query — so a
+    re-run picks it up again rather than silently skipping it (the
+    silent-skip case).
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -468,7 +466,7 @@ def test_orchestrator_reverts_state_on_timeout_halt(
     entry = payload["entries"][0]
     assert entry["final_linear_state"] == first["state"]["name"]
 
-    # Same string lands on stderr (US-B / ABA-213 invariant).
+    # Same string lands on stderr (invariant).
     stderr_lines = capsys.readouterr().err.splitlines()
     (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
     assert entry["halt_reason"] == halt_line
@@ -478,10 +476,9 @@ def test_orchestrator_reverts_state_on_timeout_halt(
 def test_orchestrator_reverts_state_on_post_spawn_not_done(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ABA-229 AC2: when the agent exits without flipping to Done — leaving
-    the issue in "In Progress" (the ABA-227 case) — the orchestrator must
-    revert to the original Todo/Backlog state and the run-log records the
-    reverted state.
+    """When the agent exits without flipping to Done — leaving the issue in
+    "In Progress" — the orchestrator must revert to the original
+    Todo/Backlog state and the run-log records the reverted state.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -514,8 +511,8 @@ def test_orchestrator_reverts_state_on_post_spawn_not_done(
     monkeypatch.setattr(linear, "set_state", fake_set_state)
     monkeypatch.setattr(linear, "get_issue", fake_get_issue)
 
-    # Fake claude exits cleanly without flipping state — same poison-pill
-    # shape as ABA-227.
+    # Fake claude exits cleanly without flipping state — the poison-pill
+    # shape.
     fake_claude = _write_fake_claude_script(tmp_path)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
@@ -541,8 +538,8 @@ def test_orchestrator_reverts_state_on_post_spawn_not_done(
 def test_orchestrator_halt_records_revert_failure_non_fatally(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ABA-229 AC4: if the revert ``set_state`` call raises, the orchestrator
-    still exits 1 with a halt entry written. The halt-reason explicitly
+    """If the revert ``set_state`` call raises, the orchestrator still exits
+    1 with a halt entry written. The halt-reason explicitly
     notes the revert failure so the operator can fix the state by hand,
     and no traceback escapes.
     """
@@ -566,8 +563,8 @@ def test_orchestrator_halt_records_revert_failure_non_fatally(
             raise RuntimeError(revert_error_message)
 
     def fake_get_issue(issue_id: str) -> dict:
-        # Agent left the issue in In Progress — the case that motivated
-        # ABA-229. Revert will be attempted but will fail.
+        # Agent left the issue in In Progress. Revert will be attempted
+        # but will fail.
         return {
             **issues_by_id[issue_id],
             "state": {"type": "started", "name": "In Progress"},
@@ -613,7 +610,7 @@ def test_orchestrator_halt_records_revert_failure_non_fatally(
 def test_orchestrator_setup_failure_does_not_attempt_revert(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ABA-229 AC3: pre-spawn setup-failure path is unchanged — when
+    """Pre-spawn setup-failure path is unchanged — when
     ``worktree.add`` or the initial ``linear.set_state`` itself raised,
     no revert is needed because the state never moved. This pins the
     "only one set_state call observed" invariant.
@@ -658,7 +655,7 @@ def test_orchestrator_setup_failure_does_not_attempt_revert(
 def test_orchestrator_rerun_after_halt_picks_up_same_issue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ABA-229 AC5: after a halted run that successfully reverts state, a
+    """After a halted run that successfully reverts state, a
     second ``orchestrator.run(_stub_repos(repo))`` invocation against the same cycle picks
     up the previously-halted issue first — because the revert restored
     it to a ``_PENDING_STATE_TYPES`` value and the existing sort key

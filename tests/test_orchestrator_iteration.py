@@ -1,6 +1,6 @@
-"""Drain-the-cycle iteration test for the orchestrator (Task 3 / ABA-200).
+"""Drain-the-cycle iteration test for the orchestrator.
 
-Walking-skeleton (Task 1) covered one issue end-to-end. This test pins the
+The walking skeleton covered one issue end-to-end. This test pins the
 behaviour that *every* sorted Todo/Backlog issue is processed in order, each
 in its own worktree, and that every worktree is removed when the spawned
 session signals completion.
@@ -11,7 +11,7 @@ What we substitute and why:
   attribute, so monkey-patching ``cycle_id`` / ``pending_issues`` / ``get_issue``
   on it is sufficient. We do **not** stub the GraphQL transport — the layer
   under test here is the orchestrator loop, not the wire format (the wire
-  format is exercised by Task 6 / ABA-203).
+  format is exercised separately).
 * Spawned ``claude -p``: replaced with a real shell script via
   ``_CLAUDE_CMD``. The script writes the basename of its cwd (the issue
   identifier — that's how the orchestrator names worktrees) into a shared

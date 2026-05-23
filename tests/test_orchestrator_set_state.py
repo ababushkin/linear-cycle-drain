@@ -1,11 +1,11 @@
-"""Orchestrator In-Progress-before-spawn test (Task 7 / ABA-209).
+"""Orchestrator In-Progress-before-spawn test.
 
-The acceptance smoke for US-A (ABA-203, 2026-05-22) discovered that spawned
-agents moved their issues `Todo → Done` directly, leaving `startedAt: null`
-in Linear — bullet 2 of ABA-194 ("In Progress → Done visible in history")
-failed. This test pins the fix: before spawning ``claude -p`` for an issue,
-the orchestrator must call ``linear.set_state(issue_id, "In Progress")``,
-and it must do so *before* the spawn — not after, not during, not skipped.
+If a spawned agent moves its issue `Todo → Done` directly, it leaves
+`startedAt: null` in Linear and the issue's history never shows
+"In Progress → Done". This test pins the fix: before spawning ``claude -p``
+for an issue, the orchestrator must call
+``linear.set_state(issue_id, "In Progress")``, and it must do so *before*
+the spawn — not after, not during, not skipped.
 
 Substitution choices mirror ``test_orchestrator_iteration.py``: real git
 repo, in-process Linear stub via attribute monkey-patching, fake ``claude``

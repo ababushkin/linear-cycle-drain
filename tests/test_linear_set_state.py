@@ -1,10 +1,10 @@
-"""Unit tests for the ``set_state`` helper (Task 7 / ABA-209).
+"""Unit tests for the ``set_state`` helper.
 
 The helper performs two GraphQL calls: a ``workflowStates`` query to resolve
 the state name to a state ID, then an ``issueUpdate`` mutation to apply it.
 These tests stub ``linear._post`` rather than the HTTP transport — the layer
 under test is the helper's query shape and error handling, not the wire
-serialisation (covered by the integration test in Task 6 / ABA-203).
+serialisation (covered by a separate integration test).
 """
 from __future__ import annotations
 

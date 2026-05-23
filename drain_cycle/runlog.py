@@ -1,16 +1,16 @@
-"""Per-cycle run-log artefact (US-C / ABA-196).
+"""Per-cycle run-log artefact.
 
 Each ``drain-cycle`` invocation produces a single JSON file at
 ``~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`` capturing one
 entry per attempted issue. The filename embeds the run-start timestamp
 (UTC, ``%Y%m%dT%H%M%S%fZ``) so re-running ``drain-cycle`` against the
-same cycle writes a new file instead of clobbering the prior one
-(ABA-230). Downstream consumers glob the directory and group by
-``cycle_id`` (carried inside each file).
+same cycle writes a new file instead of clobbering the prior one.
+Downstream consumers glob the directory and group by ``cycle_id``
+(carried inside each file).
 
 * KR1 (completion %) is computed from ``entries[].final_linear_state``
   merged across every file sharing the same ``cycle_id``.
-* US-D (cycle-drain self-grading) reads every file across cycles.
+* Cycle-drain self-grading reads every file across cycles.
 * The kill condition (KR1 < 50%) merges per-cycle then thresholds.
 
 Schema:
@@ -38,7 +38,7 @@ Schema:
 as required). On the orchestrator's halt entry it is the exact string
 also written to stderr — both surfaces are produced by the same
 ``_halt_message`` helper in ``orchestrator.py`` so the on-disk and
-terminal values cannot drift (US-B / ABA-213). Non-last entries are
+terminal values cannot drift. Non-last entries are
 ``null`` by construction: the orchestrator returns on first halt, so
 anything before the halt is a Done entry.
 
@@ -80,13 +80,13 @@ class RunLog:
     Writing the initial ``{cycle_id, cycle_duration_seconds: 0.0,
     entries: []}`` shell in ``__post_init__`` means that even a zero-issue
     cycle (or a crash before the first ``append_entry``) leaves the
-    artefact on disk, which is what US-D / kill-condition tooling needs
-    to distinguish "drained nothing" from "never ran".
+    artefact on disk, which is what kill-condition tooling needs to
+    distinguish "drained nothing" from "never ran".
 
     The filename embeds a UTC run-start timestamp with microsecond
     resolution, so two ``RunLog`` instances on the same ``cycle_id``
     (re-running ``drain-cycle`` after a halt) write to two separate
-    files instead of one clobbering the other (ABA-230).
+    files instead of one clobbering the other.
     """
 
     cycle_id: str

@@ -1,4 +1,4 @@
-"""Prompt-template assertions for Task 4 / ABA-201.
+"""Prompt-template assertions.
 
 The prompt is what the orchestrator hands to ``claude -p`` — its four
 segments (title, body, execution preamble, tail line) must appear in the

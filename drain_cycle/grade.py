@@ -1,25 +1,24 @@
-"""Self-grade a series of drain-cycle runs (US-D / ABA-197).
+"""Self-grade a series of drain-cycle runs.
 
-Reads every ``~/.drain-cycle/runs/*.json`` produced by US-C / ABA-196 and
-emits a human-readable health read:
+Reads every ``~/.drain-cycle/runs/*.json`` produced by the orchestrator
+and emits a human-readable health read:
 
-1. Per-cycle section (Task 2 / ABA-219): cycle_id, attempted count,
-   integer completion %, and halted entries as
+1. Per-cycle section: cycle_id, attempted count, integer completion %,
+   and halted entries as
    ``<identifier>: (<final_linear_state>, <exit_code>)``.
-2. Across-cycles section (Task 3 / ABA-220): trend label over the last
-   ``_TREND_WINDOW`` cycles + recurrent ``(final_linear_state,
-   exit_code)`` tuples appearing in ≥2 of those cycles.
-3. Verdict section (Task 4 / ABA-221): one of ``HEALTHY`` / ``WATCH``
-   / ``CONCERNING`` against the most-recent cycle's completion %.
-   Labels are general health bands per ABA-197 — the operator
-   interprets them against whatever kill / continuation rule they hold
-   for the work being drained. No project-specific reminders are baked
-   into the tool (ABA-197 out-of-scope clause).
+2. Across-cycles section: trend label over the last ``_TREND_WINDOW``
+   cycles + recurrent ``(final_linear_state, exit_code)`` tuples
+   appearing in ≥2 of those cycles.
+3. Verdict section: one of ``HEALTHY`` / ``WATCH`` / ``CONCERNING``
+   against the most-recent cycle's completion %. Labels are general
+   health bands — the operator interprets them against whatever kill /
+   continuation rule they hold for the work being drained. No
+   project-specific reminders are baked into the tool.
 
 Run logs are grouped by ``cycle_id`` because one cycle can produce
 multiple files when ``drain-cycle`` is re-run against the same cycle
-after a halt (ABA-230). Chronological ordering uses the earliest
-filename per cycle.
+after a halt. Chronological ordering uses the earliest filename per
+cycle.
 """
 from __future__ import annotations
 
@@ -34,12 +33,12 @@ from . import runlog
 
 _TREND_WINDOW = 3
 """Number of most-recent cycles considered by the trend + recurrent-tuple
-analysis (Task 3 / ABA-220). Pinned here; not configurable by the CLI."""
+analysis. Pinned here; not configurable by the CLI."""
 
 _HEALTHY_THRESHOLD = 80
 _WATCH_THRESHOLD = 50
-"""Verdict bands per ABA-197 acceptance. Boundaries are inclusive on the
-lower edge: ≥80 → HEALTHY, 50–79 → WATCH, <50 → CONCERNING."""
+"""Verdict bands. Boundaries are inclusive on the lower edge:
+≥80 → HEALTHY, 50–79 → WATCH, <50 → CONCERNING."""
 
 
 def default_runs_dir() -> Path:
@@ -71,11 +70,11 @@ class _Cycle:
 def _collect_cycles(runs_dir: Path) -> list[_Cycle]:
     """Group run-log files by cycle_id, chronological by earliest filename.
 
-    A cycle can span multiple files (ABA-230 — re-running drain-cycle on
-    the same cycle writes a new file). Tie-break by filename is the rule
-    pinned in ABA-219's scope; in practice cycles never tie because each
-    cycle has its own UUID, but the rule is held for determinism if two
-    cycles ever did share a min-filename timestamp.
+    A cycle can span multiple files (re-running drain-cycle on the same
+    cycle writes a new file). Ties are broken by filename; in practice
+    cycles never tie because each cycle has its own UUID, but the rule is
+    held for determinism if two cycles ever did share a min-filename
+    timestamp.
 
     Malformed files — invalid JSON, missing ``cycle_id`` — are skipped
     with a stderr warning. The grade tool is the kill-condition gauge;

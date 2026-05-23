@@ -1,11 +1,10 @@
 """Drain a cycle by iterating over its sorted Todo/Backlog issues.
 
-Task 3 / ABA-200 turns the walking skeleton into a real loop. Halt-on-not-Done
-(ABA-202), the orchestrator-owned Todo→In-Progress transition (ABA-209), the
-run-log artefact (US-C / ABA-215), and the inspectable-halt UX (US-B / ABA-212
-+ ABA-213) all live here. The halt-message helper ``_halt_message`` is the
-single source of truth for the operator-facing halt string — emitted both on
-stderr and into the run-log entry's ``halt_reason`` field.
+Halt-on-not-Done, the orchestrator-owned Todo→In-Progress transition, the
+run-log artefact, and the inspectable-halt UX all live here. The halt-message
+helper ``_halt_message`` is the single source of truth for the operator-facing
+halt string — emitted both on stderr and into the run-log entry's
+``halt_reason`` field.
 """
 from __future__ import annotations
 
@@ -27,10 +26,10 @@ as any other halt — so a hung agent advances the cycle to operator
 attention instead of stalling indefinitely. Sized for one long unattended
 issue; raise locally if a single issue legitimately takes longer."""
 _UNRESOLVED_WORKTREE_DISPLAY = "<unresolved>"
-"""Worktree-path placeholder for the pre-spawn resolution-halt path
-(ABA-232). No path has been chosen yet — the issue couldn't be mapped
-to a target repo — so the run-log entry and stderr halt line carry this
-marker rather than a misleading fake path."""
+"""Worktree-path placeholder for the pre-spawn resolution-halt path.
+No path has been chosen yet — the issue couldn't be mapped to a target
+repo — so the run-log entry and stderr halt line carry this marker
+rather than a misleading fake path."""
 
 
 def _now_iso() -> str:
@@ -38,12 +37,12 @@ def _now_iso() -> str:
 
 
 def _halt_message(identifier: str, state_name: str, worktree_path: Path) -> str:
-    """Single source of truth for the halt UX (ABA-212 / ABA-213).
+    """Single source of truth for the halt UX.
 
     The same string lands on stderr (the operator's grep anchor) and in
-    the run-log entry's ``halt_reason`` field — so US-D / kill-condition
-    tooling reads the same human-readable explanation the operator saw
-    at halt time.
+    the run-log entry's ``halt_reason`` field — so kill-condition tooling
+    reads the same human-readable explanation the operator saw at halt
+    time.
     """
     return f"Halt: {identifier} (final state: {state_name}) at {worktree_path}"
 
@@ -54,14 +53,14 @@ def _revert_to_pre_halt_state(
     """Restore Linear state on halt; return ``(state_to_report, error_msg)``.
 
     The orchestrator transitions issues Todo→In Progress before spawning the
-    agent (ABA-209). When the run halts, that In-Progress flag leaves the
-    issue outside ``_PENDING_STATE_TYPES`` so a re-run silently skips it
-    (ABA-229). This helper reverses the transition and re-fetches to confirm.
+    agent. When the run halts, that In-Progress flag leaves the issue outside
+    ``_PENDING_STATE_TYPES`` so a re-run silently skips it. This helper
+    reverses the transition and re-fetches to confirm.
 
     On revert success, returns the refreshed state name and ``None``.
     On revert failure, returns ``pre_revert_state_name`` (the state the
     issue is actually still in, so the operator can find it) plus the
-    exception message — non-fatal per AC4. A failed refresh after a
+    exception message — non-fatal. A failed refresh after a
     successful revert falls back to ``target_state_name``, since we trust
     the mutation landed even if the read-back didn't.
     """
@@ -92,9 +91,9 @@ def run(repos: Repos) -> int:
         try:
             target_repo = repos.resolve(issue)
         except RepoResolutionError as exc:
-            # Pre-spawn resolution halt (ABA-232): no Linear state was moved,
-            # so no revert is attempted. The worktree path is the
-            # ``<unresolved>`` placeholder since no repo was chosen.
+            # Pre-spawn resolution halt: no Linear state was moved, so no
+            # revert is attempted. The worktree path is the ``<unresolved>``
+            # placeholder since no repo was chosen.
             state_name = issue["state"]["name"]
             halt_reason = (
                 f"{_halt_message(identifier, state_name, Path(_UNRESOLVED_WORKTREE_DISPLAY))}"
@@ -115,9 +114,8 @@ def run(repos: Repos) -> int:
         try:
             worktree_path = worktree.add(target_repo, identifier)
             # Orchestrator owns the Todo→In Progress half so the lifecycle
-            # doesn't depend on the spawned agent's compliance (ABA-209). The
-            # agent still owns the …→Done half via Linear MCP — see prompt.py
-            # tail.
+            # doesn't depend on the spawned agent's compliance. The agent
+            # still owns the …→Done half via Linear MCP — see prompt.py tail.
             linear.set_state(issue["id"], _IN_PROGRESS_STATE_NAME)
         except Exception as exc:
             # Convert any pre-spawn failure into a recorded halt rather than
@@ -184,7 +182,7 @@ def run(repos: Repos) -> int:
         is_done = refreshed["state"]["type"] == _DONE_STATE_TYPE
 
         if is_done:
-            # Append unconditionally for every attempted issue (ABA-216).
+            # Append unconditionally for every attempted issue.
             log.append_entry(
                 issue_identifier=identifier,
                 started_at=started_at,
@@ -199,7 +197,7 @@ def run(repos: Repos) -> int:
             continue
 
         # Not-Done halt: revert to the pre-halt state so a re-run picks
-        # this issue back up instead of silently skipping it (ABA-229).
+        # this issue back up instead of silently skipping it.
         original_state_name = issue["state"]["name"]
         effective_state, revert_error = _revert_to_pre_halt_state(
             issue["id"],
@@ -212,7 +210,7 @@ def run(repos: Repos) -> int:
                 f" — revert to {original_state_name!r} failed: {revert_error}"
             )
         # halt_reason carries the same string also printed to stderr below
-        # so the on-disk and terminal surfaces cannot drift (ABA-213).
+        # so the on-disk and terminal surfaces cannot drift.
         log.append_entry(
             issue_identifier=identifier,
             started_at=started_at,

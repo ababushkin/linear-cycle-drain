@@ -1,4 +1,4 @@
-"""Unit tests for the run-log artefact (Task 1 / ABA-215, US-C / ABA-196).
+"""Unit tests for the run-log artefact.
 
 Pins the on-disk shape — file path resolved from ``$HOME``, top-level
 ``cycle_id`` / ``cycle_duration_seconds`` / ``entries`` keys, and the
@@ -24,7 +24,7 @@ def test_runlog_initialises_file_with_empty_entries_and_zero_duration(
     log = runlog.RunLog(cycle_id="stub-cycle")
 
     runs_dir = tmp_path / ".drain-cycle" / "runs"
-    # Filename is ``<cycle-id>-<run-timestamp>.json`` (ABA-230) — one file
+    # Filename is ``<cycle-id>-<run-timestamp>.json`` — one file
     # per drain-cycle invocation, no clobber on re-run.
     assert log.path.parent == runs_dir
     assert log.path.name.startswith("stub-cycle-")
@@ -102,10 +102,10 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
     assert second["exit_code"] == 1
     assert second["final_linear_state"] == "Todo"
 
-    # halt_reason round-trip (ABA-213): the Done entry's default-None is
+    # halt_reason round-trip: the Done entry's default-None is
     # persisted as JSON `null`, and the halt entry's string survives
-    # verbatim — those are the on-disk shapes US-D / kill-condition
-    # tooling reads.
+    # verbatim — those are the on-disk shapes kill-condition tooling
+    # reads.
     assert first["halt_reason"] is None
     assert second["halt_reason"] == (
         "Halt: ABA-Y (final state: Todo) at /tmp/repo/.worktrees/ABA-Y"
@@ -118,14 +118,13 @@ def test_append_entry_persists_two_entries_in_order_with_required_fields(
 def test_two_runlogs_same_cycle_id_write_to_distinct_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ABA-230 regression pin.
+    """Regression pin: distinct files per run on the same cycle.
 
     Re-running ``drain-cycle`` against the same cycle (after fixing the
     cause of a mid-cycle halt) used to clobber the first run's on-disk
     artefact, silently losing every entry. With per-run filenames
     (``<cycle-id>-<run-timestamp>.json``), both runs survive on disk and
-    downstream readers (US-D / ABA-197) can merge across them by
-    grouping on ``cycle_id``.
+    downstream readers can merge across them by grouping on ``cycle_id``.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
 

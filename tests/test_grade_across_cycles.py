@@ -1,4 +1,4 @@
-"""Across-cycles section tests for ``drain-cycle grade`` (Task 3 / ABA-220).
+"""Across-cycles section tests for ``drain-cycle grade``.
 
 Pins the trend label and recurrent-tuple counts over the last
 ``_TREND_WINDOW`` cycles.
@@ -143,7 +143,7 @@ def test_recurrent_tuple_in_two_of_three_cycles_listed_with_count_two(
 def test_per_cycle_tests_still_green_with_across_section_added(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Sanity: Task 2's required facts still appear after Task 3 lands."""
+    """Sanity: the per-cycle facts still appear alongside the across-cycles section."""
     runs_dir = tmp_path / "runs"
     _cycle_with_completion(
         runs_dir,

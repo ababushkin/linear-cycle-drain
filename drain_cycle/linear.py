@@ -3,8 +3,7 @@
 Reads ``LINEAR_API_KEY`` from the environment. The CLI entrypoint
 (``cli.main``) loads ``.env`` from the drain-cycle repo root before this
 module is exercised; a shell-exported value still takes precedence.
-Single-team scope: hardcoded to the ``Personal`` team per README §1 and
-the US-A spec.
+Single-team scope: hardcoded to the ``Personal`` team per README §1.
 """
 from __future__ import annotations
 
@@ -85,8 +84,8 @@ def pending_issues(cycle_id: str) -> list[dict[str, Any]]:
     problem (see ``PRODUCT_RULES`` Rule A5 — focus is the multiplier).
 
     ``labels`` is flattened from the GraphQL ``{nodes: [{name}]}`` shape to
-    a plain ``list[str]`` so downstream code (``repos.Repos.resolve`` per
-    ABA-232) doesn't need to know the wire shape.
+    a plain ``list[str]`` so downstream code (``repos.Repos.resolve``)
+    doesn't need to know the wire shape.
     """
     data = _post(
         """

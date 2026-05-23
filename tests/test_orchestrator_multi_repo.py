@@ -1,4 +1,4 @@
-"""Multi-repo orchestrator behaviour (ABA-232).
+"""Multi-repo orchestrator behaviour.
 
 Two halves:
 

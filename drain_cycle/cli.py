@@ -1,17 +1,16 @@
 """``drain-cycle`` CLI entry point.
 
-Zero-arg invocation per US-A: drain the current Linear cycle. Each
-issue's target repo is resolved from a ``repo:<name>`` label against
-``~/.drain-cycle/repos.yml`` (ABA-232); the operator runs ``drain-cycle``
-from anywhere, not from inside a target repo. The ``grade`` subcommand
-(US-D / ABA-197) reads the run logs and prints a health read.
+Zero-arg invocation drains the current Linear cycle. Each issue's target
+repo is resolved from a ``repo:<name>`` label against
+``~/.drain-cycle/repos.yml``; the operator runs ``drain-cycle`` from
+anywhere, not from inside a target repo. The ``grade`` subcommand reads
+the run logs and prints a health read.
 
 Secrets load before any module reads ``os.environ``, first hit wins:
 shell-exported vars → ``~/.drain-cycle/.env`` → the drain-cycle repo
 root ``.env`` (dev-checkout fallback, absent once installed as a uv
 tool). ``load_dotenv`` defaults to ``override=False``, so an
-already-set var always beats a later source and the shell always wins
-(ABA-233).
+already-set var always beats a later source and the shell always wins.
 
 ``repos.yml`` is validated eagerly at startup so a broken config halts
 exit 1 on stderr before any Linear traffic or run-log file is written
