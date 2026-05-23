@@ -8,3 +8,19 @@ repos:
   drain-cycle: /Users/you/src/drain-cycle
   pde-skills:  /Users/you/src/pde-skills
   stock-review: ~/src/stock-review
+
+# Optional. Project-scoped config that each worker symlinks from the repo into
+# its worktree, so a headless run loads the same settings, hooks, agents, and
+# skills as an interactive session at the repo root. Defaults to the two below
+# when the key is omitted. Entries are paths relative to the repo root (no
+# absolute paths, no `..`); absent ones are skipped. Add tool-specific dirs
+# your repos use — e.g. uncomment `.entire` if you use the entire.io tool.
+#
+# Each entry must be gitignored in the target repo. The symlink lives inside
+# the worktree, so a non-ignored entry would be staged by the worker's
+# `git add` and would block `git worktree remove` at teardown. The two
+# defaults are gitignored in a typical repo; check any path you add.
+# worktree_config_paths:
+#   - .claude
+#   - .mcp.json
+#   - .entire

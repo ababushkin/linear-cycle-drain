@@ -188,6 +188,61 @@ def test_orchestrator_passes_resolved_model_to_worker(
     assert _model_arg(argv_dir / "ABA-OPUS.txt") == "claude-opus-4-7"
 
 
+def test_orchestrator_links_project_config_into_worker_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orchestrator symlinks gitignored project config into the worktree
+    before spawning, so the worker's cwd can read ``.claude/settings.json`` —
+    the precondition for project hooks to load. Asserts resolvability from the
+    worker's cwd, not that hooks actually fire (no real ``claude`` runs)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    # Gitignore the project config exactly as a real repo does, then seed it.
+    # It is therefore absent from the worktree checkout until linked in.
+    (repo / ".gitignore").write_text(".claude\n.worktrees\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "gitignore"], cwd=repo, check=True, capture_output=True
+    )
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text("{}\n")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    issue = _issue("ABA-CFG", priority=1, sort_order=1.0)
+    raw_issues = [issue]
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    done_marker = tmp_path / "done-identifiers.txt"
+    probe_dir = tmp_path / "probe"
+    probe_dir.mkdir()
+
+    def fake_pending_issues(cycle_id: str) -> list[dict]:
+        completed = _completed_identifiers(done_marker)
+        return [i for i in raw_issues if i["identifier"] not in completed]
+
+    def fake_get_issue(issue_id: str) -> dict:
+        issue = issues_by_id[issue_id]
+        if issue["identifier"] in _completed_identifiers(done_marker):
+            return {**issue, "state": {"type": "completed", "name": "Done"}}
+        return issue
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle")
+    monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+    monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
+
+    fake_claude = _write_config_probe_claude_script(tmp_path, done_marker, probe_dir)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
+
+    assert exit_code == 0
+    # The probe ran inside the worktree and could read .claude/settings.json
+    # through the symlink the orchestrator created before spawning it.
+    assert (probe_dir / "ABA-CFG.txt").read_text().strip() == "present"
+
+
 def _captured_argv_for_one_issue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, identifier: str
 ) -> list[str]:
@@ -276,6 +331,27 @@ def _write_argv_capturing_claude_script(
         'id="$(basename "$PWD")"\n'
         f': > "{argv_dir}/$id.txt"\n'
         f'for a in "$@"; do printf "%s\\n" "$a" >> "{argv_dir}/$id.txt"; done\n'
+        f'printf "%s\\n" "$id" >> "{done_marker}"\n'
+    )
+    script.chmod(0o755)
+    return script
+
+
+def _write_config_probe_claude_script(
+    tmp_path: Path, done_marker: Path, probe_dir: Path
+) -> Path:
+    """A ``claude -p`` stand-in that records whether ``.claude/settings.json``
+    is readable from its cwd (``present``/``absent``) to
+    ``probe_dir/<identifier>.txt``, then marks the issue Done."""
+    script = tmp_path / "fake-claude-probe.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'id="$(basename "$PWD")"\n'
+        "if [ -r .claude/settings.json ]; then\n"
+        f'  printf "present\\n" > "{probe_dir}/$id.txt"\n'
+        "else\n"
+        f'  printf "absent\\n" > "{probe_dir}/$id.txt"\n'
+        "fi\n"
         f'printf "%s\\n" "$id" >> "{done_marker}"\n'
     )
     script.chmod(0o755)

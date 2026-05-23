@@ -11,8 +11,10 @@ missing ``main``) rather than just a non-zero exit code.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+from typing import Iterable
 
 BASE_BRANCH = "main"
 WORKTREE_DIR = ".worktrees"
@@ -29,6 +31,38 @@ def add(repo: Path, identifier: str) -> Path:
         cwd=repo,
     )
     return worktree_path
+
+
+def link_project_config(
+    repo: Path, worktree_path: Path, names: Iterable[str]
+) -> list[Path]:
+    """Symlink gitignored project-scoped config from ``repo`` into the worktree.
+
+    A git worktree checks out only tracked files, so gitignored project config
+    (``.claude/`` settings/hooks/agents/skills, a root ``.mcp.json``) is absent.
+    Linking the repo's real entries in gives a worker the same settings, hooks,
+    agents, skills, and MCP config as an interactive session at the repo root —
+    and because the link points at the live dir, a stateful hook reads and
+    writes the repo's actual config exactly as a non-worktree run would.
+
+    For each name: skip it if absent in ``repo`` (a clean no-op for repos
+    without that config) or if something already occupies that path in the
+    worktree (a tracked entry git checked out, or a pre-existing link). The
+    check uses ``os.path.lexists`` so a dangling link counts as present and is
+    never clobbered. Returns the links created.
+    """
+    created: list[Path] = []
+    repo = repo.resolve()
+    for name in names:
+        source = repo / name
+        if not source.exists():
+            continue
+        link = worktree_path / name
+        if os.path.lexists(link):
+            continue
+        os.symlink(source, link)
+        created.append(link)
+    return created
 
 
 def remove(repo: Path, worktree_path: Path) -> None:

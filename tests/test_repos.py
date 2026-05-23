@@ -142,6 +142,116 @@ def test_load_raises_config_error_when_path_value_not_string(tmp_path: Path) -> 
         repos.load(config)
 
 
+def test_load_defaults_worktree_config_paths_when_key_absent(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    config = _write_config(
+        tmp_path,
+        f"""
+        repos:
+          target: {target}
+        """,
+    )
+    loaded = repos.load(config)
+    assert loaded.worktree_config_paths == (".claude", ".mcp.json")
+
+
+def test_load_parses_custom_worktree_config_paths_verbatim(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    config = _write_config(
+        tmp_path,
+        f"""
+        repos:
+          target: {target}
+        worktree_config_paths:
+          - .claude
+          - .mcp.json
+          - .entire
+        """,
+    )
+    loaded = repos.load(config)
+    assert loaded.worktree_config_paths == (".claude", ".mcp.json", ".entire")
+
+
+def test_load_raises_config_error_when_worktree_config_paths_not_list(
+    tmp_path: Path,
+) -> None:
+    config = _write_config(
+        tmp_path,
+        f"""
+        repos:
+          target: {tmp_path}
+        worktree_config_paths: .claude
+        """,
+    )
+    with pytest.raises(repos.RepoConfigError, match="non-empty list"):
+        repos.load(config)
+
+
+def test_load_raises_config_error_when_worktree_config_paths_empty(
+    tmp_path: Path,
+) -> None:
+    config = _write_config(
+        tmp_path,
+        f"""
+        repos:
+          target: {tmp_path}
+        worktree_config_paths: []
+        """,
+    )
+    with pytest.raises(repos.RepoConfigError, match="non-empty list"):
+        repos.load(config)
+
+
+def test_load_raises_config_error_when_worktree_config_path_not_string(
+    tmp_path: Path,
+) -> None:
+    config = _write_config(
+        tmp_path,
+        f"""
+        repos:
+          target: {tmp_path}
+        worktree_config_paths:
+          - 42
+        """,
+    )
+    with pytest.raises(repos.RepoConfigError, match="must be a non-empty string"):
+        repos.load(config)
+
+
+def test_load_raises_config_error_when_worktree_config_path_absolute(
+    tmp_path: Path,
+) -> None:
+    config = _write_config(
+        tmp_path,
+        f"""
+        repos:
+          target: {tmp_path}
+        worktree_config_paths:
+          - /etc/passwd
+        """,
+    )
+    with pytest.raises(repos.RepoConfigError, match="must be a relative path"):
+        repos.load(config)
+
+
+def test_load_raises_config_error_when_worktree_config_path_has_parent_ref(
+    tmp_path: Path,
+) -> None:
+    config = _write_config(
+        tmp_path,
+        f"""
+        repos:
+          target: {tmp_path}
+        worktree_config_paths:
+          - ../escape
+        """,
+    )
+    with pytest.raises(repos.RepoConfigError, match=r"must not contain '\.\.'"):
+        repos.load(config)
+
+
 def test_resolve_returns_mapped_path_for_single_repo_label(tmp_path: Path) -> None:
     r = repos.Repos(mapping={"alpha": tmp_path})
     issue = {"identifier": "ABA-1", "labels": ["repo:alpha"]}

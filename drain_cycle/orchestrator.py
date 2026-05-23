@@ -146,6 +146,13 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
 
         try:
             worktree_path = worktree.add(target_repo, identifier)
+            # A worktree checks out only tracked files, so gitignored
+            # project config (.claude/, .mcp.json) is absent. Symlink it in
+            # so the worker loads the same settings/hooks/agents/skills/MCP
+            # as an interactive session at the repo root.
+            worktree.link_project_config(
+                target_repo, worktree_path, repos.worktree_config_paths
+            )
             # Orchestrator owns the Todo→In Progress half so the lifecycle
             # doesn't depend on the spawned agent's compliance. The agent
             # still owns the …→Done half via Linear MCP — see prompt.py tail.

@@ -56,6 +56,17 @@ repos:
 
 Paths starting with `~` expand against `$HOME`. A missing or malformed `repos.yml` halts the CLI before any Linear traffic — exit 1, message on stderr, no run-log entry written. See [`docs/repos.example.yml`](docs/repos.example.yml) for a copyable template.
 
+By default each worker symlinks the repo's `.claude/` and `.mcp.json` into its worktree, so it loads the same project-scoped settings, hooks, agents, and skills as an interactive session at the repo root (see [Debug capture](#debug-capture) and [`docs/design-decisions.md`](docs/design-decisions.md) §10). To link a different set — for example to add a tool-specific directory like `.entire/` — add an optional `worktree_config_paths` list:
+
+```yaml
+worktree_config_paths:
+  - .claude
+  - .mcp.json
+  - .entire        # opt in if this repo uses the entire.io tool
+```
+
+Omit the key to keep the `[.claude, .mcp.json]` default. Each entry is a path relative to the repo root; absent entries are skipped, and a tracked entry git already checked out is never overwritten. **Each entry must be gitignored in the target repo** — the symlink lives inside the worktree, so a non-ignored entry would be staged by the worker's `git add` and would block `git worktree remove` at teardown. The two defaults are gitignored in a typical repo; check any path you add.
+
 Verify the install from anywhere:
 
 ```bash
@@ -157,9 +168,9 @@ Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>-<run-time
 
 ### Debug capture
 
-Workers spawn in an isolated worktree, whose environment differs from an interactive session at the repo root — most notably, **project-scoped hooks registered in a gitignored `.claude/settings.json` (e.g. entire.io's checkpointing) don't load inside the worktree.** [`docs/design-decisions.md`](docs/design-decisions.md) §10 documents why.
+Workers spawn in an isolated worktree. drain-cycle symlinks the repo's project-scoped config (`.claude/`, `.mcp.json`, and any extra paths you configure — see Install) into each worktree, so a worker loads the same settings, hooks, agents, and skills as an interactive session at the repo root, including project-scoped hooks like entire.io's checkpointing. [`docs/design-decisions.md`](docs/design-decisions.md) §10 documents the mechanism.
 
-To see exactly which settings sources, plugins, MCP servers, and hooks a worker initialised, run with debug capture on:
+To confirm that parity — to see exactly which settings sources, plugins, MCP servers, and hooks a worker initialised — run with debug capture on:
 
 ```bash
 DRAIN_CYCLE_DEBUG=1 drain-cycle
