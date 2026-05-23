@@ -68,9 +68,9 @@ class Repos:
         if not labels:
             raise RepoResolutionError(f"no {_REPO_LABEL_PREFIX} label on issue")
         if len(labels) > 1:
-            names = ", ".join(sorted(label[len(_REPO_LABEL_PREFIX):] for label in labels))
+            names = ", ".join(sorted(label.removeprefix(_REPO_LABEL_PREFIX) for label in labels))
             raise RepoResolutionError(f"multiple {_REPO_LABEL_PREFIX} labels: {names}")
-        name = labels[0][len(_REPO_LABEL_PREFIX):]
+        name = labels[0].removeprefix(_REPO_LABEL_PREFIX)
         try:
             path = self.mapping[name]
         except KeyError:
