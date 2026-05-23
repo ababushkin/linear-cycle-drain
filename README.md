@@ -30,7 +30,7 @@ Read this section before installing — `drain-cycle` is deliberately not for ev
 Install with `uv` so the `drain-cycle` executable lands on `$PATH` in an isolated environment — no venv to activate:
 
 ```bash
-uv tool install .                                          # from a local checkout
+uv tool install .                                              # from a local checkout
 uv tool install git+https://github.com/ababushkin/drain-cycle  # or straight from the repo
 ```
 
@@ -165,7 +165,7 @@ To see exactly which settings sources, plugins, MCP servers, and hooks a worker 
 DRAIN_CYCLE_DEBUG=1 drain-cycle
 ```
 
-Each spawned session then gets `claude`'s `--debug-file`, writing one `<cycle-id>-<run-timestamp>-<issue>.debug.log` per issue beside the run log in `~/.drain-cycle/runs/`. It is off by default — a one-shot investigative switch, not steady-state overhead. Debug output goes to the file, so it doesn't disturb the token-usage stream the run log records. These captures are verbose and aren't pruned automatically (like the run logs themselves); delete them by hand when you're done investigating.
+Each spawned session then gets `claude`'s `--debug-file`, writing one `<cycle-id>-<run-timestamp>-<issue>.debug.log` per issue beside the run log in `~/.drain-cycle/runs/`. It is off by default. Debug output goes to the file, so it doesn't disturb the token-usage stream the run log records. These captures are verbose and aren't pruned automatically (like the run logs themselves); delete them by hand when you're done investigating.
 
 ## Design
 
