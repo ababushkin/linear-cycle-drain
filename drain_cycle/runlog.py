@@ -22,6 +22,7 @@ Schema:
       "cycle_duration_seconds": <float>,
       "cycle_cost_usd":         <float>,
       "cycle_tokens_cumulative": <int>,
+      "cycle_halt_reason":      null | "<cycle-budget halt line>",
       "entries":                [
         {
           "issue_identifier":   "ABA-NNN",
@@ -73,6 +74,15 @@ without them grade unchanged.
 totals over ``entries`` (entries with ``null`` cost or usage contribute
 zero), recomputed on every persist alongside ``cycle_duration_seconds``.
 
+``cycle_halt_reason`` is ``null`` unless the orchestrator stopped the run
+because a *cycle-wide* cap (tokens / cost / wall-clock) was breached — the
+death-by-aggregate case where every issue stayed under its own per-issue
+caps but their sum crossed the cycle budget. The breaching issue's own
+entry is recorded normally (it ran to Done); this top-level field is the
+record of why no further issue was attempted, carrying the same ``Halt:``
+string printed to stderr. A per-issue breach, by contrast, lands in the
+halting entry's ``halt_reason`` like any other halt.
+
 ``cycle_duration_seconds`` is computed automatically on every persist as
 ``max(finished_at) - min(started_at)`` across ``entries`` (``0.0`` when
 empty). This is the KR2 grading proxy — "how long was the agent doing
@@ -123,6 +133,7 @@ class RunLog:
     cycle_id: str
     path: Path = field(init=False)
     entries: list[dict[str, Any]] = field(default_factory=list, init=False)
+    cycle_halt_reason: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         directory = runs_dir()
@@ -175,31 +186,42 @@ class RunLog:
         )
         self._persist()
 
-    def _persist(self) -> None:
-        payload = {
-            "cycle_id": self.cycle_id,
-            "cycle_duration_seconds": self._cycle_duration_seconds(),
-            "cycle_cost_usd": self._cycle_cost_usd(),
-            "cycle_tokens_cumulative": self._cycle_tokens_cumulative(),
-            "entries": self.entries,
-        }
-        self.path.write_text(json.dumps(payload, indent=2) + "\n")
+    def set_cycle_halt(self, reason: str) -> None:
+        """Record why a cycle-wide cap stopped the run, and persist.
 
-    def _cycle_duration_seconds(self) -> float:
+        Called by the orchestrator after the breaching issue's own entry is
+        already written, so the file carries both the issue's normal entry
+        and the cycle-level reason no further issue was attempted.
+        """
+        self.cycle_halt_reason = reason
+        self._persist()
+
+    def cycle_duration_seconds(self) -> float:
         if not self.entries:
             return 0.0
         starts = [datetime.fromisoformat(e["started_at"]) for e in self.entries]
         finishes = [datetime.fromisoformat(e["finished_at"]) for e in self.entries]
         return (max(finishes) - min(starts)).total_seconds()
 
-    def _cycle_cost_usd(self) -> float:
+    def cycle_cost_usd(self) -> float:
         return sum(
             e["cost_usd"] for e in self.entries if e.get("cost_usd") is not None
         )
 
-    def _cycle_tokens_cumulative(self) -> int:
+    def cycle_tokens_cumulative(self) -> int:
         return sum(
             e["usage"]["cumulative"]
             for e in self.entries
             if e.get("usage") is not None
         )
+
+    def _persist(self) -> None:
+        payload = {
+            "cycle_id": self.cycle_id,
+            "cycle_duration_seconds": self.cycle_duration_seconds(),
+            "cycle_cost_usd": self.cycle_cost_usd(),
+            "cycle_tokens_cumulative": self.cycle_tokens_cumulative(),
+            "cycle_halt_reason": self.cycle_halt_reason,
+            "entries": self.entries,
+        }
+        self.path.write_text(json.dumps(payload, indent=2) + "\n")

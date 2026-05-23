@@ -13,17 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import linear, model, prompt, runlog, worker, worktree
+from .limits import Limits, check_cycle
 from .repos import RepoResolutionError, Repos
 
 _DONE_STATE_TYPE = "completed"
 _IN_PROGRESS_STATE_NAME = "In Progress"
 _CLAUDE_CMD = ["claude", "-p", "--dangerously-skip-permissions"]
-_ISSUE_TIMEOUT_SECONDS = 3600.0
-"""Outer cap on one spawned ``claude -p`` session. A session that exceeds
-this converts to a halt — same exit-1 + run-log entry + Halt: stderr line
-as any other halt — so a hung agent advances the cycle to operator
-attention instead of stalling indefinitely. Sized for one long unattended
-issue; raise locally if a single issue legitimately takes longer."""
 _UNRESOLVED_WORKTREE_DISPLAY = "<unresolved>"
 """Worktree-path placeholder for the pre-spawn resolution-halt path.
 No path has been chosen yet — the issue couldn't be mapped to a target
@@ -92,7 +87,9 @@ def _worker_log_fields(result: worker.WorkerResult) -> dict[str, object]:
     }
 
 
-def run(repos: Repos) -> int:
+def run(repos: Repos, limits: Limits | None = None) -> int:
+    if limits is None:
+        limits = Limits()
     cycle_id = linear.current_cycle_id()
     log = runlog.RunLog(cycle_id=cycle_id)
     issues = linear.pending_issues(cycle_id)
@@ -165,14 +162,17 @@ def run(repos: Repos) -> int:
             model=worker_model,
             prompt=agent_prompt,
             cwd=worktree_path,
-            timeout_seconds=_ISSUE_TIMEOUT_SECONDS,
+            token_limit=limits.per_issue_tokens,
+            time_limit_seconds=limits.per_issue_seconds,
+            cost_limit_usd=limits.per_issue_cost_usd,
         )
         finished_at = _now_iso()
 
-        if result.timed_out:
-            # The worker exceeded the per-issue cap and was process-group
-            # killed (grandchildren reaped). Same revert + halt contract as
-            # a not-Done exit, with the recorded usage of the killed session.
+        if result.breach is not None:
+            # The worker crossed a per-issue cap (tokens or time) and was
+            # process-group killed (grandchildren reaped). Same revert + halt
+            # contract as a not-Done exit, with the recorded usage of the
+            # killed session and the breached cap named in the halt reason.
             original_state_name = issue["state"]["name"]
             effective_state, revert_error = _revert_to_pre_halt_state(
                 issue["id"],
@@ -181,7 +181,7 @@ def run(repos: Repos) -> int:
             )
             halt_reason = (
                 f"{_halt_message(identifier, effective_state, worktree_path)}"
-                f" — claude -p exceeded {_ISSUE_TIMEOUT_SECONDS:.0f}s timeout"
+                f" — {result.breach.describe()}"
             )
             if revert_error is not None:
                 halt_reason += (
@@ -218,6 +218,22 @@ def run(repos: Repos) -> int:
             )
             worktree.remove(target_repo, worktree_path)
             print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
+
+            # Cycle-wide circuit breaker: every issue may stay under its own
+            # per-issue caps while their sum drains the quota. Check the
+            # running totals (which now include this Done issue) before
+            # spawning the next one; on breach, stop the cycle.
+            cycle_breach = check_cycle(
+                limits,
+                tokens=log.cycle_tokens_cumulative(),
+                cost_usd=log.cycle_cost_usd(),
+                seconds=log.cycle_duration_seconds(),
+            )
+            if cycle_breach is not None:
+                halt_reason = f"Halt: {cycle_breach.describe()}"
+                log.set_cycle_halt(halt_reason)
+                print(halt_reason, file=sys.stderr)
+                return 1
             continue
 
         # Not-Done halt: revert to the pre-halt state so a re-run picks

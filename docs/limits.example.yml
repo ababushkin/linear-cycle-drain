@@ -1,0 +1,26 @@
+# Example ~/.drain-cycle/limits.yml
+#
+# Resource guardrails for drain-cycle workers. This file is OPTIONAL: with no
+# limits.yml, the baked-in defaults below are all live. Copy to
+# ~/.drain-cycle/limits.yml and edit only the caps you want to change.
+#
+# Precedence: baked-in default -> this file. A key you omit keeps its default;
+# a number overrides it; `null` turns that guardrail OFF. Every value must be a
+# positive number or null — a typo (0, a negative, a word) halts startup rather
+# than silently disabling a cap you believed was active.
+#
+# Token count is the primary guardrail (a subscription user pays in tokens);
+# cost rides alongside via claude's own --max-budget-usd. Per-issue tokens and
+# time are enforced by killing the worker mid-run; the cycle caps stop the run
+# between issues when their running total is breached.
+#
+# Defaults (shown explicitly here — delete any line to keep its default):
+per_issue_tokens: 8000000     # kill a worker past this many cumulative tokens
+per_issue_seconds: 1200       # kill a worker past 20 minutes of wall-clock
+per_issue_cost_usd: 15        # passed to claude as --max-budget-usd
+cycle_tokens: 30000000        # stop the cycle past this many cumulative tokens
+cycle_seconds: 5400           # stop the cycle past 90 minutes of wall-clock
+cycle_cost_usd: 60            # stop the cycle past this much total spend
+
+# To disable a guardrail, set it to null, e.g.:
+#   per_issue_cost_usd: null

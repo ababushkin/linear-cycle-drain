@@ -12,9 +12,11 @@ root ``.env`` (dev-checkout fallback, absent once installed as a uv
 tool). ``load_dotenv`` defaults to ``override=False``, so an
 already-set var always beats a later source and the shell always wins.
 
-``repos.yml`` is validated eagerly at startup so a broken config halts
-exit 1 on stderr before any Linear traffic or run-log file is written
-— there is no cycle yet to log against.
+``repos.yml`` and the optional ``limits.yml`` are validated eagerly at
+startup so a broken config halts exit 1 on stderr before any Linear
+traffic or run-log file is written — there is no cycle yet to log
+against. ``limits.yml`` is optional (its absence yields the baked-in
+guardrail defaults); a present-but-malformed one still halts.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from . import grade, orchestrator, repos
+from . import grade, limits, orchestrator, repos
 
 _REPO_ENV = Path(__file__).resolve().parent.parent / ".env"
 
@@ -54,10 +56,11 @@ def main() -> None:
     if not argv:
         try:
             loaded_repos = repos.load()
-        except repos.RepoConfigError as exc:
+            loaded_limits = limits.load()
+        except (repos.RepoConfigError, limits.LimitsConfigError) as exc:
             print(f"drain-cycle: {exc}", file=sys.stderr)
             sys.exit(1)
-        sys.exit(orchestrator.run(loaded_repos))
+        sys.exit(orchestrator.run(loaded_repos, loaded_limits))
     if argv == ["grade"]:
         sys.exit(grade.run(grade.default_runs_dir()))
     if argv in (["-h"], ["--help"]):

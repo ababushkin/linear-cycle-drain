@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from drain_cycle import linear, orchestrator, repos
+from drain_cycle import limits, linear, orchestrator, repos
 
 
 _TEST_REPO_NAME = "test-repo"
@@ -382,9 +382,10 @@ def test_orchestrator_records_halt_when_claude_subprocess_times_out(
     hanging_claude.write_text("#!/bin/sh\nsleep 10\n")
     hanging_claude.chmod(0o755)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(hanging_claude)])
-    monkeypatch.setattr(orchestrator, "_ISSUE_TIMEOUT_SECONDS", 0.3)
 
-    exit_code = orchestrator.run(_stub_repos(repo))
+    exit_code = orchestrator.run(
+        _stub_repos(repo), limits.Limits(per_issue_seconds=0.3)
+    )
     assert exit_code == 1
 
     runs_dir = tmp_path / ".drain-cycle" / "runs"
@@ -397,7 +398,7 @@ def test_orchestrator_records_halt_when_claude_subprocess_times_out(
     stderr_lines = capsys.readouterr().err.splitlines()
     (halt_line,) = [line for line in stderr_lines if line.startswith("Halt: ")]
     assert entry["halt_reason"] == halt_line
-    assert "timeout" in halt_line.lower()
+    assert "per-issue time cap exceeded" in halt_line
 
     # Worktree preserved for inspection (existing halt contract).
     assert (repo / ".worktrees" / first["identifier"]).is_dir()
@@ -452,9 +453,10 @@ def test_orchestrator_reverts_state_on_timeout_halt(
     hanging_claude.write_text("#!/bin/sh\nsleep 10\n")
     hanging_claude.chmod(0o755)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(hanging_claude)])
-    monkeypatch.setattr(orchestrator, "_ISSUE_TIMEOUT_SECONDS", 0.3)
 
-    exit_code = orchestrator.run(_stub_repos(repo))
+    exit_code = orchestrator.run(
+        _stub_repos(repo), limits.Limits(per_issue_seconds=0.3)
+    )
     assert exit_code == 1
 
     # Two set_state calls in pick order: In Progress (pre-spawn), then

@@ -111,11 +111,13 @@ def test_run_issue_accumulates_usage_deduped_by_message_id(tmp_path: Path) -> No
         model="claude-sonnet-4-6",
         prompt="ignored by the fake",
         cwd=tmp_path,
-        timeout_seconds=30.0,
+        token_limit=None,
+        time_limit_seconds=30.0,
+        cost_limit_usd=None,
         passthrough=passthrough,
     )
 
-    assert result.timed_out is False
+    assert result.breach is None
     assert result.exit_code == 0
     assert result.model == "claude-sonnet-4-6"
 
@@ -142,8 +144,8 @@ def test_run_issue_accumulates_usage_deduped_by_message_id(tmp_path: Path) -> No
 
 
 def test_run_issue_times_out_and_kills_whole_process_group(tmp_path: Path) -> None:
-    """A worker that overruns its cap is killed at the process-group level,
-    reaping a grandchild that a kill of the direct child alone would
+    """A worker that overruns its time cap is killed at the process-group
+    level, reaping a grandchild that a kill of the direct child alone would
     orphan — the bug ``subprocess.run(timeout=)`` had."""
     pidfile = tmp_path / "grandchild.pid"
     script = tmp_path / "hanging-claude.sh"
@@ -160,11 +162,18 @@ def test_run_issue_times_out_and_kills_whole_process_group(tmp_path: Path) -> No
         model="claude-sonnet-4-6",
         prompt="ignored",
         cwd=tmp_path,
-        timeout_seconds=0.5,
+        token_limit=None,
+        time_limit_seconds=0.5,
+        cost_limit_usd=None,
         passthrough=io.StringIO(),
+        poll_interval_seconds=0.05,
     )
 
-    assert result.timed_out is True
+    assert result.breach is not None
+    assert result.breach.scope == "per-issue"
+    assert result.breach.metric == "time"
+    assert result.breach.limit == 0.5
+    assert result.breach.observed >= 0.5
     # Killed by signal → negative return code.
     assert result.exit_code < 0
     # No stream was emitted, so usage is all-zero and the summary is empty.
@@ -177,7 +186,7 @@ def test_run_issue_times_out_and_kills_whole_process_group(tmp_path: Path) -> No
 
     grandchild_pid = int(pidfile.read_text().strip())
     assert _wait_dead(grandchild_pid), (
-        f"grandchild {grandchild_pid} survived the timeout — process group "
+        f"grandchild {grandchild_pid} survived the time cap — process group "
         "was not killed"
     )
 
@@ -199,11 +208,15 @@ def test_run_issue_falls_back_to_accumulated_usage_when_killed_before_result(
         model="claude-opus-4-7",
         prompt="ignored",
         cwd=tmp_path,
-        timeout_seconds=1.0,
+        token_limit=None,
+        time_limit_seconds=1.0,
+        cost_limit_usd=None,
         passthrough=io.StringIO(),
+        poll_interval_seconds=0.05,
     )
 
-    assert result.timed_out is True
+    assert result.breach is not None
+    assert result.breach.metric == "time"
     # Accumulated from the two partial-stream turns.
     assert result.usage["cumulative"] == 439
     assert result.usage["peak_context"] == 305
@@ -213,3 +226,108 @@ def test_run_issue_falls_back_to_accumulated_usage_when_killed_before_result(
     assert result.num_turns is None
     assert result.session_id is None
     assert result.is_error is None
+
+
+def test_run_issue_kills_process_group_on_token_breach(tmp_path: Path) -> None:
+    """The primary guardrail: a session whose live cumulative tokens cross
+    the per-issue cap is killed at the process-group level (grandchild
+    reaped), and the breach names the cap and the value at kill time."""
+    stream_file = tmp_path / "stream.jsonl"
+    # One turn far over the tiny cap, then the script hangs so the monitor's
+    # poll catches the breach instead of the process exiting on its own.
+    stream_file.write_text(_assistant("msg_big", inp=10_000, out=0, cc=0, cr=0) + "\n")
+    pidfile = tmp_path / "grandchild.pid"
+    script = tmp_path / "overshoot-claude.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'cat "{stream_file}"\n'  # emit the overshooting usage
+        "sleep 30 &\n"  # grandchild; survives a direct-child-only kill
+        f'echo $! > "{pidfile}"\n'
+        "sleep 30\n"  # hang past the cap
+    )
+    script.chmod(0o755)
+
+    result = worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="ignored",
+        cwd=tmp_path,
+        token_limit=100,
+        time_limit_seconds=None,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+        poll_interval_seconds=0.05,
+    )
+
+    assert result.breach is not None
+    assert result.breach.scope == "per-issue"
+    assert result.breach.metric == "token"
+    assert result.breach.limit == 100
+    assert result.breach.observed >= 100
+    assert result.exit_code < 0
+    # The overshooting turn was recorded before the kill.
+    assert result.usage["cumulative"] == 10_000
+
+    grandchild_pid = int(pidfile.read_text().strip())
+    assert _wait_dead(grandchild_pid), (
+        f"grandchild {grandchild_pid} survived the token cap — process group "
+        "was not killed"
+    )
+
+
+def _argv_capturing_claude(tmp_path: Path, argv_file: Path) -> Path:
+    """A ``claude -p`` stand-in that records its argv (one token per line)
+    to ``argv_file`` then exits, so a test can assert which flags were passed."""
+    script = tmp_path / "argv-claude.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        f': > "{argv_file}"\n'
+        f'for a in "$@"; do printf "%s\\n" "$a" >> "{argv_file}"; done\n'
+    )
+    script.chmod(0o755)
+    return script
+
+
+def test_run_issue_passes_max_budget_usd_flag(tmp_path: Path) -> None:
+    """The per-issue cost cap is handed to ``claude`` as ``--max-budget-usd``
+    (the native belt), and the prompt stays the trailing positional after the
+    value-taking flags."""
+    argv_file = tmp_path / "argv.txt"
+    script = _argv_capturing_claude(tmp_path, argv_file)
+
+    result = worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="THE-PROMPT",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=None,
+        cost_limit_usd=15.0,
+        passthrough=io.StringIO(),
+    )
+
+    argv = argv_file.read_text().splitlines()
+    assert "--max-budget-usd" in argv
+    assert argv[argv.index("--max-budget-usd") + 1] == "15"
+    assert argv[-1] == "THE-PROMPT"
+    assert result.breach is None
+
+
+def test_run_issue_omits_max_budget_when_cost_limit_none(tmp_path: Path) -> None:
+    """With the cost guardrail off, no ``--max-budget-usd`` is passed."""
+    argv_file = tmp_path / "argv.txt"
+    script = _argv_capturing_claude(tmp_path, argv_file)
+
+    worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="THE-PROMPT",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=None,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+    )
+
+    argv = argv_file.read_text().splitlines()
+    assert "--max-budget-usd" not in argv

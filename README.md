@@ -133,9 +133,27 @@ After the run, one JSON log per invocation is at `~/.drain-cycle/runs/<cycle-id>
 
 Both are skill packs for Claude Code — install them globally and the spawned `claude -p` sessions will pick them up automatically.
 
+## Limits
+
+Each worker is bounded by resource guardrails so a runaway session — or a cycle of merely expensive ones — can't drain your whole quota unattended. There are two layers:
+
+- **Native belt** — the per-issue cost cap is handed to `claude` as `--max-budget-usd`, so the session self-terminates on spend.
+- **Orchestrator suspenders** — the per-issue token and time caps are enforced by killing the worker's whole process group the moment either is crossed; the cycle-wide caps (tokens, cost, wall-clock) stop the run between issues when their running total is breached. A per-issue breach lands in the halting entry's `halt_reason`; a cycle breach is recorded in the run log's top-level `cycle_halt_reason`.
+
+Token count is the primary guardrail (a subscription user pays in tokens, not dollars); cost rides alongside it.
+
+Defaults are baked in — **per-issue 8M tokens · 20 min · $15; cycle 30M tokens · 90 min · $60** — and live with no config. To change them, drop a `~/.drain-cycle/limits.yml` (optional) overriding only the caps you care about:
+
+```yaml
+per_issue_tokens: 4000000   # tighten the per-issue token cap
+cycle_cost_usd: null        # disable the cycle cost cap entirely
+```
+
+A key you omit keeps its default; a number overrides it; `null` turns that guardrail off. Each value must be a positive number or `null` — a malformed file halts startup rather than silently reverting to defaults. See [`docs/limits.example.yml`](docs/limits.example.yml) for the full annotated template. The defaults are deliberately generous starting points; recalibrate against your real run-log spend.
+
 ## Logs & grading
 
-Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, and `halt_reason` on the halting entry. Use it to gauge how cleanly your runs complete — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
+Every invocation writes one JSON file: `~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`. One entry per attempted issue, including timestamps, exit code, final Linear state, worktree path, per-issue token usage and cost, and `halt_reason` on the halting entry. The file also carries per-cycle totals (`cycle_tokens_cumulative`, `cycle_cost_usd`, `cycle_duration_seconds`) and a `cycle_halt_reason` when a cycle-wide cap stopped the run. Use it to gauge how cleanly your runs complete and what they cost — see [`drain_cycle/runlog.py`](drain_cycle/runlog.py) for the schema.
 
 ## Design
 

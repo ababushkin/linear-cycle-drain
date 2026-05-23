@@ -29,12 +29,22 @@ total, so it is deliberately not used for the token figures — those come
 from the accumulated per-turn stream, which is also what survives a kill
 before any ``result`` arrives.
 
+**Guardrails — belt and suspenders.** ``per_issue_cost_usd`` is handed to
+``claude`` as ``--max-budget-usd`` so the session self-terminates on cost
+(the native belt). The token and time caps are the orchestrator's
+suspenders: a poll loop watches the live cumulative-token tally and the
+elapsed wall-clock, and SIGKILLs the session the moment either is crossed.
+Any cap passed as ``None`` is not enforced; with both token and time caps
+off the worker simply waits for the session to exit on its own. A crossed
+cap is reported back as a ``Breach`` so the orchestrator can name it in the
+halt entry. See ``limits.py`` for the thresholds and their precedence.
+
 **Process-group kill.** The worker is launched with
-``start_new_session=True`` so it leads its own process group. On timeout
+``start_new_session=True`` so it leads its own process group. On a breach
 the whole group is SIGKILLed via ``os.killpg``, reaping grandchildren —
 MCP servers, sub-agents — that a kill of the direct child alone would
 orphan to keep burning tokens. SIGKILL (not a SIGTERM grace) is used
-deliberately: a session being force-terminated past its deadline has no
+deliberately: a session being force-terminated past a guardrail has no
 clean-shutdown work worth waiting for, and SIGKILL is the only signal a
 misbehaving grandchild cannot ignore. Killing the whole group also closes
 the stdout pipe those grandchildren inherited, which is what lets the
@@ -53,6 +63,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
+from .limits import Breach
+
 _STREAM_FLAGS = ["--verbose", "--output-format", "stream-json"]
 """Flags that switch ``claude -p`` into line-delimited JSON event mode.
 ``--verbose`` is required: without it ``stream-json`` emits only the
@@ -65,6 +77,12 @@ process exits. The group SIGKILL closes every inherited write-end of the
 pipe, so EOF normally arrives at once; the bound only guards the
 pathological case of a group member that somehow escaped the kill, so the
 worker returns with the usage it has rather than hanging."""
+
+_POLL_INTERVAL_SECONDS = 1.0
+"""How often the breach monitor wakes to compare the live token tally and
+elapsed wall-clock against the per-issue caps. A worry-free overshoot of at
+most one interval before the kill lands; one second is responsive enough for
+a session measured in minutes and cheap enough to poll."""
 
 _TOKEN_FIELDS = (
     "input_tokens",
@@ -79,16 +97,18 @@ class WorkerResult:
     """Outcome of one spawned session, recorded into the run-log entry.
 
     ``exit_code`` is the process return code (negative when killed by a
-    signal, e.g. ``-9`` on the timeout SIGKILL). ``timed_out`` is the
-    branch selector the orchestrator reads to take its timeout-halt path.
-    ``usage`` carries the four token components plus ``cumulative`` and
-    ``peak_context``. ``cost_usd`` / ``num_turns`` / ``session_id`` /
-    ``is_error`` come from the terminal ``result`` event and are ``None``
-    when the session was killed before one arrived.
+    signal, e.g. ``-9`` on a guardrail SIGKILL). ``breach`` is the branch
+    selector the orchestrator reads: ``None`` when the session ran to its
+    own exit, otherwise the per-issue token or time cap that was crossed,
+    carrying the cap and the value observed at kill time. ``usage`` carries
+    the four token components plus ``cumulative`` and ``peak_context``.
+    ``cost_usd`` / ``num_turns`` / ``session_id`` / ``is_error`` come from
+    the terminal ``result`` event and are ``None`` when the session was
+    killed before one arrived.
     """
 
     exit_code: int
-    timed_out: bool
+    breach: Breach | None
     duration_seconds: float
     model: str
     usage: dict[str, int]
@@ -104,15 +124,22 @@ def run_issue(
     model: str,
     prompt: str,
     cwd: Path,
-    timeout_seconds: float,
+    token_limit: int | None,
+    time_limit_seconds: float | None,
+    cost_limit_usd: float | None,
     passthrough: TextIO | None = None,
+    poll_interval_seconds: float = _POLL_INTERVAL_SECONDS,
 ) -> WorkerResult:
     """Spawn one streaming ``claude -p`` session and return its usage.
 
     ``claude_cmd`` is the base argv (``["claude", "-p",
     "--dangerously-skip-permissions"]``); the streaming flags, ``--model``,
-    and the prompt are appended here. The session runs in its own process
-    group; on exceeding ``timeout_seconds`` the whole group is killed.
+    ``--max-budget-usd`` (when ``cost_limit_usd`` is set), and the prompt are
+    appended here. The session runs in its own process group; if its
+    cumulative tokens cross ``token_limit`` or its wall-clock crosses
+    ``time_limit_seconds`` the whole group is killed and the returned
+    ``WorkerResult.breach`` names the cap. A limit passed as ``None`` is not
+    enforced. ``cost_limit_usd`` is enforced by ``claude`` itself, not here.
 
     Non-JSON lines on the merged stdout/stderr stream (claude warnings,
     hook stderr) are written to ``passthrough`` (default ``sys.stderr``) so
@@ -120,8 +147,12 @@ def run_issue(
     consumed by the usage parser.
     """
     # The prompt is the trailing positional; it must follow the value-taking
-    # ``--model`` option, not sit between an option and its value.
-    argv = [*claude_cmd, *_STREAM_FLAGS, "--model", model, prompt]
+    # ``--model`` / ``--max-budget-usd`` options, not sit between an option
+    # and its value.
+    argv = [*claude_cmd, *_STREAM_FLAGS, "--model", model]
+    if cost_limit_usd is not None:
+        argv += ["--max-budget-usd", f"{cost_limit_usd:g}"]
+    argv.append(prompt)
     sink = passthrough if passthrough is not None else sys.stderr
     accumulator = _UsageAccumulator()
 
@@ -142,11 +173,15 @@ def run_issue(
     )
     reader.start()
 
-    timed_out = False
-    try:
-        proc.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
+    breach = _monitor(
+        proc,
+        accumulator,
+        started=started,
+        token_limit=token_limit,
+        time_limit_seconds=time_limit_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+    if breach is not None:
         _kill_process_group(proc)
         proc.wait()
     reader.join(timeout=_READER_JOIN_TIMEOUT_SECONDS)
@@ -155,7 +190,7 @@ def run_issue(
     cost_usd, num_turns, session_id, is_error = accumulator.summary()
     return WorkerResult(
         exit_code=proc.returncode,
-        timed_out=timed_out,
+        breach=breach,
         duration_seconds=duration,
         model=model,
         usage=accumulator.usage(),
@@ -164,6 +199,42 @@ def run_issue(
         session_id=session_id,
         is_error=is_error,
     )
+
+
+def _monitor(
+    proc: subprocess.Popen[str],
+    accumulator: _UsageAccumulator,
+    *,
+    started: float,
+    token_limit: int | None,
+    time_limit_seconds: float | None,
+    poll_interval_seconds: float,
+) -> Breach | None:
+    """Wait for the session, returning the per-issue cap it breaches (if any).
+
+    With both caps off there is nothing to watch for, so we block on the
+    process directly. Otherwise we wake every ``poll_interval_seconds`` to
+    compare the live cumulative-token tally and elapsed wall-clock against
+    the caps; the first crossed cap is returned for the caller to kill on.
+    Returns ``None`` when the session exits on its own first.
+    """
+    if token_limit is None and time_limit_seconds is None:
+        proc.wait()
+        return None
+    while True:
+        try:
+            proc.wait(timeout=poll_interval_seconds)
+            return None
+        except subprocess.TimeoutExpired:
+            pass
+        if token_limit is not None:
+            observed = accumulator.cumulative()
+            if observed >= token_limit:
+                return Breach("per-issue", "token", token_limit, observed)
+        if time_limit_seconds is not None:
+            elapsed = time.monotonic() - started
+            if elapsed >= time_limit_seconds:
+                return Breach("per-issue", "time", time_limit_seconds, elapsed)
 
 
 def _kill_process_group(proc: subprocess.Popen[str]) -> None:
@@ -281,6 +352,14 @@ class _UsageAccumulator:
             self.num_turns = event.get("num_turns")
             self.session_id = event.get("session_id")
             self.is_error = event.get("is_error")
+
+    def cumulative(self) -> int:
+        """Live billed-token total across turns — the per-issue token cap is
+        compared against this on every poll, so it reads under the lock and
+        stays cheap (no peak-context / per-component breakdown)."""
+        with self._lock:
+            turns = list(self._turns.values())
+        return sum(turn[field] for turn in turns for field in _TOKEN_FIELDS)
 
     def usage(self) -> dict[str, int]:
         totals = {field: 0 for field in _TOKEN_FIELDS}

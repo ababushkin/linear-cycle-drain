@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from drain_cycle import cli, grade, orchestrator, repos
+from drain_cycle import cli, grade, limits, orchestrator, repos
 
 _SECRET = "DRAIN_CYCLE_TEST_SECRET"
 
@@ -80,13 +80,14 @@ def test_load_secrets_home_env_wins_over_repo_env(
 def _stub_no_op_orchestrator(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     called: list[bool] = []
 
-    def fake_run(loaded_repos) -> int:
+    def fake_run(loaded_repos, loaded_limits) -> int:
         called.append(True)
         return 0
 
     monkeypatch.setattr(orchestrator, "run", fake_run)
     monkeypatch.setattr(cli, "load_dotenv", lambda *_a, **_kw: False)
     monkeypatch.setattr(repos, "load", lambda *_a, **_kw: repos.Repos(mapping={}))
+    monkeypatch.setattr(limits, "load", lambda *_a, **_kw: limits.Limits())
     return called
 
 
@@ -213,4 +214,33 @@ def test_zero_arg_invocation_eagerly_validates_repos_yml(
     captured = capsys.readouterr()
     assert "repos.yml" in captured.err
     # Pure stderr surface — nothing on stdout for the operator to parse.
+    assert captured.out == ""
+
+
+def test_zero_arg_invocation_eagerly_validates_limits_yml(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed ``limits.yml`` halts the zero-arg invocation exit 1 on
+    stderr before the orchestrator runs — same eager-validation contract as
+    ``repos.yml``, so a typo'd guardrail can't silently fall back to defaults
+    mid-run."""
+    forbid_orchestrator(monkeypatch)
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_a, **_kw: False)
+    monkeypatch.setattr(repos, "load", lambda *_a, **_kw: repos.Repos(mapping={}))
+
+    def failing_load(*_a, **_kw) -> limits.Limits:
+        raise limits.LimitsConfigError(
+            "~/.drain-cycle/limits.yml entry 'per_issue_tokens': must be a "
+            "positive number or null (got 'lots')"
+        )
+
+    monkeypatch.setattr(limits, "load", failing_load)
+    monkeypatch.setattr("sys.argv", ["drain-cycle"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "limits.yml" in captured.err
     assert captured.out == ""

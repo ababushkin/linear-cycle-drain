@@ -38,6 +38,7 @@ def test_runlog_initialises_file_with_empty_entries_and_zero_duration(
         "cycle_duration_seconds": 0.0,
         "cycle_cost_usd": 0.0,
         "cycle_tokens_cumulative": 0,
+        "cycle_halt_reason": None,
         "entries": [],
     }
 
