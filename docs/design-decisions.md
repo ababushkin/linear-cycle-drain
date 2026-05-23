@@ -30,7 +30,7 @@ Each issue gets `.worktrees/<issue-identifier>/` branched off `main`, used once,
 
 ## 4. Run-log is one file per invocation, not one file per cycle
 
-Each `drain-cycle` invocation writes its own run-log file at `~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`. The per-file schema is unchanged — `{cycle_id, cycle_duration_seconds, entries: [...]}` — and the `cycle_id` carried inside each file is how downstream readers group runs of the same cycle together.
+Each `drain-cycle` invocation writes its own run-log file at `~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`. The per-file schema is unchanged — `{cycle_id, cycle_duration_seconds, entries: [...]}` — and `cycle_id` inside each file is how downstream readers group runs of the same cycle.
 
 **Alternatives considered.** (A) Multi-run schema in one file: `{cycle_id, runs: [...]}`. Faithful, but every reader has to learn the new shape and the on-disk backup file needs migrating. (B) Open-and-extend: load the existing file and append to a single flat `entries` list. Loses run boundaries, and `cycle_duration_seconds` (computed as `max(finished_at) - min(started_at)`) spans the inter-run gap and becomes misleading. (D) Refuse to clobber: fail-fast if the file exists. Breaks the unattended re-run flow the tool exists for (fix X, re-run, drain the rest) until a resume mode is built.
 
@@ -52,7 +52,7 @@ The orchestrator used to be single-repo by construction: `repo = Path.cwd()`, ev
 
 **`repos.yml` config errors are even earlier.** A missing or malformed `repos.yml` halts the CLI at startup, before any Linear traffic and before the run-log file is created. There is no cycle yet to log against, so the failure surfaces only on stderr. This is enforced eagerly in `cli.main` so the orchestrator never sees a broken config.
 
-**Why labels not file convention** (e.g. requiring the operator to put the issue identifier in a branch comment, or use a remote-name convention). Labels are the only signal that's enforceable in Linear's UI: cycle planners can see at a glance which repo an issue targets, and the multi-repo distinction is visible at the right surface (Linear) rather than buried in a config file.
+**Why labels over file conventions.** (e.g. requiring the operator to put the issue identifier in a branch comment, or use a remote-name convention). Labels are the only signal that's enforceable in Linear's UI: cycle planners can see at a glance which repo an issue targets, and the multi-repo distinction is visible at the right surface (Linear) rather than buried in a config file.
 
 **Out-of-v1 deliberately.** No env-var expansion inside `repos.yml`; no auto-clone if the path is missing; no parallelism across repos; no retroactive labelling of pre-cycle issues. All are operator-time concerns rather than tool-time concerns. Multi-team Linear support stays out of scope too — the tool is still hardcoded to the `Personal` team.
 
@@ -77,9 +77,9 @@ A spawned `claude -p` worker inherits whatever model the operator has globally p
 
 **Alternatives considered.** (A) Keep inheriting the global pin — rejected, it is exactly what caused the burn and gives the operator no per-issue control. (B) A single global `--model` flag with no per-issue override — simpler, but a cycle legitimately mixes cheap mechanical issues with a few that warrant Opus; per-issue is the right grain. (C) Raise on ambiguous labels like `repo:` does — rejected, halting a whole unattended cycle over a duplicate label is worse than silently taking the cheap, safe default.
 
-## 8. Workers stream stream-json; usage is parsed off the wire and the worker leads its own process group
+## 8. Workers use stream-json output; usage is parsed from the wire and the worker leads its own process group
 
-The spawned session is launched with `claude -p --verbose --output-format stream-json` via `subprocess.Popen(..., stdout=PIPE, stderr=STDOUT, text=True, bufsize=1, start_new_session=True)`, read line by line in a reader thread. The per-issue run-log entry gains `model`, a `usage` block (the four token components + `cumulative` + `peak_context`), `cost_usd`, `num_turns`, `session_id`, `is_error`, and an explicit `duration_seconds`; the file gains top-level `cycle_cost_usd` and `cycle_tokens_cumulative`. All of this lives in `drain_cycle/worker.py`; the orchestrator calls `worker.run_issue(...)` and records the result.
+The worker launches with `claude -p --verbose --output-format stream-json` via `subprocess.Popen(..., stdout=PIPE, stderr=STDOUT, text=True, bufsize=1, start_new_session=True)`, reading output line by line in a reader thread. The per-issue run-log entry gains `model`, a `usage` block (the four token components + `cumulative` + `peak_context`), `cost_usd`, `num_turns`, `session_id`, `is_error`, and an explicit `duration_seconds`; the file gains top-level `cycle_cost_usd` and `cycle_tokens_cumulative`. All of this lives in `drain_cycle/worker.py`; the orchestrator calls `worker.run_issue(...)` and records the result.
 
 **The problem.** A run that burned ~108M tokens left the operator with no on-disk record of *which issue* spent what — usage had to be reconstructed from `~/.claude/projects/*.jsonl`. Spend is the metric the cost guardrail (a downstream slice) acts on, so it has to be captured at the source.
 
@@ -112,7 +112,7 @@ Before this, the only ceiling on a worker was a 3600s wall-clock timeout, and th
 
 **The time cap absorbed the old 3600s timeout.** Rather than keep a separate hardcoded outer timeout alongside the configurable time cap, the time cap *is* the timeout — `per_issue_seconds` (default 20 min, tighter than the old 3600s and below the diagnosed 23-min overrun). One time concept, configurable, instead of two.
 
-**Breach reporting.** A breach is a small `Breach(scope, metric, limit, observed)` value whose `describe()` renders the operator-facing line — used verbatim by the worker (per-issue kill) and the orchestrator (cycle stop) so the wording can't drift. A per-issue breach takes the existing exit-1 + revert + `halt_reason` contract, naming the cap and the value at kill time. A cycle breach is recorded in the run log's new top-level `cycle_halt_reason`: the breaching issue's own entry is a normal Done (it finished cleanly), and the top-level field records why no further issue was attempted.
+**Breach reporting.** A breach is a small `Breach(scope, metric, limit, observed)` value whose `describe()` renders the operator-facing line — used verbatim by the worker (per-issue kill) and the orchestrator (cycle stop) so the wording can't drift. A per-issue breach takes the existing exit-1 + revert + `halt_reason` contract, naming the cap and the value at kill time. A cycle breach lands in the run log's top-level `cycle_halt_reason`: the breaching issue's own entry is a normal Done, and the top-level field explains why the run stopped.
 
 **`limits.yml` semantics and validation.** Absent key → baked-in default; explicit `null` → guardrail off; positive number → override. A present-but-malformed file (unknown key, non-positive, non-numeric, bool, invalid YAML) raises `LimitsConfigError` and halts at CLI startup — mirroring the eager `repos.yml` validation (decision 5). The reasoning is sharper here: silently falling back to defaults on a typo would leave the operator believing a tighter cap was active when it wasn't, which is worse than a loud halt.
 
