@@ -1,0 +1,1 @@
+/elements-of-style:writing-clearly-and-concisely review the docs/design-decision and README files and give me some recommendations to improve the clarity and conciseness of these documents as per your guidelines

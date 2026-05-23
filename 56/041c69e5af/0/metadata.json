@@ -1,0 +1,83 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "56041c69e5af",
+  "session_id": "6437b083-f262-4b53-991a-3b47a8c791d8",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-23T13:40:59.203336Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "README.md",
+    "docs/design-decisions.md",
+    "docs/limits.example.yml",
+    "drain_cycle/cli.py",
+    "drain_cycle/limits.py",
+    "drain_cycle/orchestrator.py",
+    "drain_cycle/runlog.py",
+    "drain_cycle/worker.py",
+    "tests/test_cli.py",
+    "tests/test_limits.py",
+    "tests/test_orchestrator_cycle_limit.py",
+    "tests/test_orchestrator_halt.py",
+    "tests/test_runlog.py",
+    "tests/test_worker.py"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "add363ee2319",
+  "token_usage": {
+    "input_tokens": 5,
+    "cache_creation_tokens": 53651,
+    "cache_read_tokens": 97486,
+    "output_tokens": 560,
+    "api_call_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-23T13:40:59.194028Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 70,
+    "total_committed": 0,
+    "total_lines_changed": 70,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 864,
+      "user_lines_removed": 70,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "README.md": 19,
+        "docs/design-decisions.md": 28,
+        "docs/limits.example.yml": 26,
+        "drain_cycle/cli.py": 9,
+        "drain_cycle/limits.py": 170,
+        "drain_cycle/orchestrator.py": 29,
+        "drain_cycle/runlog.py": 34,
+        "drain_cycle/worker.py": 99,
+        "tests/test_cli.py": 32,
+        "tests/test_limits.py": 126,
+        "tests/test_orchestrator_cycle_limit.py": 156,
+        "tests/test_orchestrator_halt.py": 8,
+        "tests/test_runlog.py": 1,
+        "tests/test_worker.py": 127
+      },
+      "user_removed_per_file": {
+        "README.md": 1,
+        "docs/design-decisions.md": 1,
+        "drain_cycle/cli.py": 6,
+        "drain_cycle/orchestrator.py": 13,
+        "drain_cycle/runlog.py": 12,
+        "drain_cycle/worker.py": 20,
+        "tests/test_cli.py": 2,
+        "tests/test_orchestrator_halt.py": 6,
+        "tests/test_worker.py": 9
+      }
+    }
+  ]
+}
