@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "c511a2e043bc",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "README.md",
+    "docs/design-decisions.md",
+    "drain_cycle/cli.py",
+    "drain_cycle/orchestrator.py",
+    "drain_cycle/progress.py",
+    "drain_cycle/status.py",
+    "drain_cycle/worker.py",
+    "tests/test_cli.py",
+    "tests/test_orchestrator_marker.py",
+    "tests/test_progress.py",
+    "tests/test_status.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/c5/11a2e043bc/0/metadata.json",
+      "transcript": "/c5/11a2e043bc/0/full.jsonl",
+      "content_hash": "/c5/11a2e043bc/0/content_hash.txt",
+      "prompt": "/c5/11a2e043bc/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 72,
+    "cache_creation_tokens": 121963,
+    "cache_read_tokens": 6593118,
+    "output_tokens": 37824,
+    "api_call_count": 68
+  }
+}
