@@ -292,6 +292,15 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
         is_done = refreshed["state"]["type"] == _DONE_STATE_TYPE
 
         if is_done:
+            remove_error: str | None = None
+            try:
+                worktree.remove(target_repo, worktree_path)
+            except RuntimeError as exc:
+                remove_error = str(exc)
+                print(
+                    f"drain-cycle: {identifier}: worktree teardown failed: {exc}",
+                    file=sys.stderr,
+                )
             # Append unconditionally for every attempted issue.
             log.append_entry(
                 issue_identifier=identifier,
@@ -300,11 +309,11 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
                 exit_code=result.exit_code,
                 final_linear_state=post_spawn_state,
                 worktree_path=str(worktree_path),
-                halt_reason=None,
+                halt_reason=remove_error,
                 **_worker_log_fields(result),
             )
-            worktree.remove(target_repo, worktree_path)
-            print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
+            if remove_error is None:
+                print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
 
             # Cycle-wide circuit breaker: every issue may stay under its own
             # per-issue caps while their sum drains the quota. Check the

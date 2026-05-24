@@ -51,11 +51,12 @@ Schema:
       ],
     }
 
-``halt_reason`` is ``null`` on every Done entry (the agent flipped state
-as required). On the orchestrator's halt entry it is the exact string
-also written to stderr — both surfaces are produced by the same
-``_halt_message`` helper in ``orchestrator.py`` so the on-disk and
-terminal values cannot drift. Non-last entries are
+``halt_reason`` is ``null`` on Done entries unless worktree teardown
+failed after the session completed — in that case the Done entry carries
+the teardown error string and the drain continues. On the orchestrator's
+halt entry it is the exact string also written to stderr — both surfaces
+are produced by the same ``_halt_message`` helper in ``orchestrator.py``
+so the on-disk and terminal values cannot drift. Non-last entries are
 ``null`` by construction: the orchestrator returns on first halt, so
 anything before the halt is a Done entry.
 
