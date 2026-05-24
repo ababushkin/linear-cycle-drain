@@ -61,7 +61,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Callable, TextIO
 
 from .limits import Breach
 
@@ -130,6 +130,7 @@ def run_issue(
     passthrough: TextIO | None = None,
     debug_file: Path | None = None,
     poll_interval_seconds: float = _POLL_INTERVAL_SECONDS,
+    on_progress: Callable[[int, int, int, float | None, float], None] | None = None,
 ) -> WorkerResult:
     """Spawn one streaming ``claude -p`` session and return its usage.
 
@@ -153,6 +154,11 @@ def run_issue(
     go to the file, not stderr, so the merged stream the usage parser reads
     is unaffected. Opt-in only; ``None`` (the default) passes no flag and the
     session behaves exactly as before. See ``docs/design-decisions.md`` §10.
+
+    ``on_progress``, when set, is called from the reader thread after each
+    new assistant turn with ``(turns, cumulative_tokens, peak_context_tokens,
+    cost_usd, elapsed_seconds)``. Callers use this for live progress display
+    and the active-run marker update.
     """
     # The prompt is the trailing positional; it must follow the value-taking
     # ``--model`` / ``--max-budget-usd`` / ``--debug-file`` options, not sit
@@ -176,9 +182,17 @@ def run_issue(
         bufsize=1,
         start_new_session=True,
     )
+
+    # Wrap on_progress to inject elapsed_seconds computed from the start time.
+    _progress_cb: Callable[[int, int, int, float | None], None] | None = None
+    if on_progress is not None:
+        def _progress_cb(turns: int, cumulative: int, peak: int, cost_usd: float | None) -> None:
+            elapsed = time.monotonic() - started
+            on_progress(turns, cumulative, peak, cost_usd, elapsed)
+
     reader = threading.Thread(
         target=_drain_stream,
-        args=(proc.stdout, accumulator, sink),
+        args=(proc.stdout, accumulator, sink, _progress_cb),
         daemon=True,
     )
     reader.start()
@@ -265,17 +279,22 @@ def _kill_process_group(proc: subprocess.Popen[str]) -> None:
 
 
 def _drain_stream(
-    stream: TextIO | None, accumulator: _UsageAccumulator, sink: TextIO
+    stream: TextIO | None,
+    accumulator: _UsageAccumulator,
+    sink: TextIO,
+    on_progress: Callable[[int, int, int, float | None], None] | None = None,
 ) -> None:
     """Read the worker's merged output line by line until EOF.
 
     Recognised JSON object events feed the usage accumulator; everything
     else (non-JSON diagnostics, JSON that isn't an object) is echoed to
     ``sink`` so the operator keeps the visibility a captured pipe would
-    otherwise hide.
+    otherwise hide. ``on_progress`` is called once per new turn (deduplicated
+    by message id) with a live usage snapshot.
     """
     if stream is None:
         return
+    last_message_id: str | None = None
     try:
         for line in stream:
             line = line.rstrip("\n")
@@ -288,6 +307,12 @@ def _drain_stream(
                 continue
             if isinstance(event, dict):
                 accumulator.feed(event)
+                if on_progress is not None and event.get("type") == "assistant":
+                    mid = (event.get("message") or {}).get("id")
+                    if mid != last_message_id:
+                        last_message_id = mid
+                        snap = accumulator.live_snapshot()
+                        on_progress(*snap)
             else:
                 _echo(sink, line)
     finally:
@@ -370,6 +395,28 @@ class _UsageAccumulator:
         with self._lock:
             turns = list(self._turns.values())
         return sum(turn[field] for turn in turns for field in _TOKEN_FIELDS)
+
+    def live_snapshot(self) -> tuple[int, int, int, float | None]:
+        """Current ``(turns, cumulative_tokens, peak_context_tokens, cost_usd)``.
+
+        Called from the reader thread after each new assistant turn. Reads
+        under the lock so the main-thread monitor cannot see a torn state.
+        """
+        with self._lock:
+            turn_count = len(self._turns)
+            turns_list = list(self._turns.values())
+            cost = self.cost_usd
+        cumulative = sum(t[f] for t in turns_list for f in _TOKEN_FIELDS)
+        peak = max(
+            (
+                t["input_tokens"]
+                + t["cache_read_input_tokens"]
+                + t["cache_creation_input_tokens"]
+                for t in turns_list
+            ),
+            default=0,
+        )
+        return turn_count, cumulative, peak, cost
 
     def usage(self) -> dict[str, int]:
         totals = {field: 0 for field in _TOKEN_FIELDS}

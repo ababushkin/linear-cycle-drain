@@ -91,6 +91,34 @@ drain-cycle
 
 Run from anywhere — `drain-cycle` resolves each issue's target repo from its `repo:<name>` label. Drains the current cycle's Todo/Backlog issues (in priority order) until either the cycle is empty (exit 0) or an issue halts (exit 1).
 
+### Inspecting a live run
+
+While a run is in progress, open a second terminal and run:
+
+```bash
+drain-cycle status
+```
+
+Example output:
+
+```
+drain-cycle: ABA-205 [2/5] — Fix the runaway token bug
+  repo:    drain-cycle
+  model:   claude-sonnet-4-6
+  elapsed: 14m
+  turns:   42
+  tokens:  8.1M cumulative  180k peak [cap: 8M ⚠]
+  cost:    $12.30 [cap: $15.00]
+```
+
+The orchestrator also writes a compact progress line to stderr on every new turn:
+
+```
+ABA-205 · turn 42 · 8.1M tok (peak 180k) · $12.30 · 14m
+```
+
+`drain-cycle status` reads `~/.drain-cycle/active.json` (written before each spawn, removed after the worker returns). With no run active it says so; with a crashed run (pid gone) it reports a stale marker rather than a live run.
+
 ### What a run looks like
 
 ```bash

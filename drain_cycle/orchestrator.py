@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import linear, model, prompt, runlog, worker, worktree
+from . import linear, model, progress, prompt, runlog, worker, worktree
 from .limits import Limits, check_cycle
 from .repos import RepoResolutionError, Repos
 
@@ -116,7 +116,8 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
         print(f"Cycle {cycle_id} has no Todo/Backlog issues — nothing to do.")
         return 0
 
-    for issue in issues:
+    total = len(issues)
+    for index, issue in enumerate(issues):
         identifier = issue["identifier"]
         print(f"drain-cycle: picked {identifier}: {issue['title']}", file=sys.stderr)
 
@@ -190,16 +191,68 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
                 file=sys.stderr,
             )
 
-        result = worker.run_issue(
-            claude_cmd=_CLAUDE_CMD,
-            model=worker_model,
-            prompt=agent_prompt,
-            cwd=worktree_path,
-            token_limit=limits.per_issue_tokens,
-            time_limit_seconds=limits.per_issue_seconds,
-            cost_limit_usd=limits.per_issue_cost_usd,
-            debug_file=debug_file,
-        )
+        marker: dict = {
+            "pid": os.getpid(),
+            "cycle_id": cycle_id,
+            "run_log_path": str(log.path),
+            "issue": {
+                "identifier": identifier,
+                "title": issue["title"],
+                "repo": target_repo.name,
+                "worktree_path": str(worktree_path),
+            },
+            "model": worker_model,
+            "started_at": started_at,
+            "index": index + 1,
+            "total": total,
+            "progress": {},
+        }
+        progress.write(marker)
+
+        def _make_on_progress(m: dict, ident: str):
+            def _cb(
+                turns: int,
+                cumulative_tokens: int,
+                peak_context_tokens: int,
+                cost_usd: float | None,
+                elapsed_seconds: float,
+            ) -> None:
+                m["progress"] = {
+                    "turns": turns,
+                    "cumulative_tokens": cumulative_tokens,
+                    "peak_context_tokens": peak_context_tokens,
+                    "cost_usd": cost_usd,
+                    "elapsed_seconds": elapsed_seconds,
+                    "last_event_at": _now_iso(),
+                }
+                progress.write(m)
+                print(
+                    progress.format_progress_line(
+                        ident,
+                        turns,
+                        cumulative_tokens,
+                        peak_context_tokens,
+                        cost_usd,
+                        elapsed_seconds,
+                    ),
+                    file=sys.stderr,
+                )
+            return _cb
+
+        try:
+            result = worker.run_issue(
+                claude_cmd=_CLAUDE_CMD,
+                model=worker_model,
+                prompt=agent_prompt,
+                cwd=worktree_path,
+                token_limit=limits.per_issue_tokens,
+                time_limit_seconds=limits.per_issue_seconds,
+                cost_limit_usd=limits.per_issue_cost_usd,
+                debug_file=debug_file,
+                on_progress=_make_on_progress(marker, identifier),
+            )
+        finally:
+            progress.clear()
         finished_at = _now_iso()
 
         if result.breach is not None:

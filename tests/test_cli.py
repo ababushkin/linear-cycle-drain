@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from drain_cycle import cli, grade, limits, orchestrator, repos
+from drain_cycle import cli, grade, limits, orchestrator, repos, status
 
 _SECRET = "DRAIN_CYCLE_TEST_SECRET"
 
@@ -188,6 +188,26 @@ def forbid_grade(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("grade.run() must not be called on unknown args")
 
     monkeypatch.setattr(grade, "run", boom)
+
+
+def test_status_subcommand_dispatches_to_status_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    called: list[bool] = []
+
+    def fake_status_run() -> int:
+        called.append(True)
+        return 0
+
+    monkeypatch.setattr(status, "run", fake_status_run)
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_a, **_kw: False)
+    monkeypatch.setattr("sys.argv", ["drain-cycle", "status"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    assert called == [True]
 
 
 def test_zero_arg_invocation_eagerly_validates_repos_yml(

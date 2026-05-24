@@ -46,6 +46,7 @@ def _load_secrets() -> None:
 _USAGE = (
     "usage: drain-cycle              drain the current Linear cycle\n"
     "       drain-cycle grade        print health read from run logs\n"
+    "       drain-cycle status       show status of the active run\n"
     "       drain-cycle --help"
 )
 
@@ -63,6 +64,9 @@ def main() -> None:
         sys.exit(orchestrator.run(loaded_repos, loaded_limits))
     if argv == ["grade"]:
         sys.exit(grade.run(grade.default_runs_dir()))
+    if argv == ["status"]:
+        from . import status
+        sys.exit(status.run())
     if argv in (["-h"], ["--help"]):
         print(_USAGE)
         sys.exit(0)
