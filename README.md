@@ -89,7 +89,9 @@ uv tool install --reinstall .      # or rebuild from scratch after a change
 drain-cycle
 ```
 
-Run from anywhere — `drain-cycle` resolves each issue's target repo from its `repo:<name>` label. Drains the current cycle's Todo/Backlog issues (in priority order) until either the cycle is empty (exit 0) or an issue halts (exit 1).
+Run from anywhere — `drain-cycle` resolves each issue's target repo from its `repo:<name>` label. Drains the current cycle's Todo/Backlog issues in manual (drag) order, respecting blocks/blocked-by, until either the cycle is empty (exit 0) or an issue halts (exit 1).
+
+Issues blocked by an unresolved blocker outside the drain set are deferred (skipped with a stderr message, left Todo). A dependency cycle among pending issues halts the entire run immediately (exit 1) with a `Halt:` line naming the involved issues.
 
 ### Inspecting a live run
 
