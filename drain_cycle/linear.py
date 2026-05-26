@@ -168,6 +168,21 @@ def _plan(issues: list[dict[str, Any]]) -> ExecutionPlan:
     return ExecutionPlan(order=order, deferred=deferred)
 
 
+def _label_name(node: dict[str, Any]) -> str:
+    """Render a label node in its prefix form.
+
+    A label in a Linear label *group* arrives as a leaf ``name`` with a
+    ``parent`` group; downstream resolvers match on a ``<group>:`` prefix
+    (``repo:``, ``model:``), so a grouped label renders as
+    ``"<group>:<name>"``. An ungrouped label keeps its bare name, which
+    already carries any literal prefix typed into the label name.
+    """
+    parent = node.get("parent")
+    if parent:
+        return f"{parent['name']}:{node['name']}"
+    return node["name"]
+
+
 def pending_issues(cycle_id: str) -> ExecutionPlan:
     """Return an ``ExecutionPlan`` for every Todo/Backlog issue in the cycle.
 
@@ -176,7 +191,8 @@ def pending_issues(cycle_id: str) -> ExecutionPlan:
     problem (see ``PRODUCT_RULES`` Rule A5 — focus is the multiplier).
 
     Post-processing flattens two wire-shape fields:
-    - ``labels { nodes { name } }`` → ``labels: list[str]``
+    - ``labels { nodes { name parent { name } } }`` → ``labels: list[str]``
+      (grouped labels rendered as ``"<group>:<name>"``)
     - ``inverseRelations`` filtered to ``type == "blocks"``
       → ``blockers: list[{id, identifier, state_type}]``; raw key removed.
     """
@@ -197,7 +213,7 @@ def pending_issues(cycle_id: str) -> ExecutionPlan:
               description
               sortOrder
               state { type name }
-              labels { nodes { name } }
+              labels { nodes { name parent { name } } }
               inverseRelations { nodes { type issue { id identifier state { type } } } }
             }
           }
@@ -207,7 +223,7 @@ def pending_issues(cycle_id: str) -> ExecutionPlan:
     )
     issues = data["issues"]["nodes"]
     for issue in issues:
-        issue["labels"] = [node["name"] for node in issue["labels"]["nodes"]]
+        issue["labels"] = [_label_name(node) for node in issue["labels"]["nodes"]]
         issue["blockers"] = [
             {
                 "id": node["issue"]["id"],

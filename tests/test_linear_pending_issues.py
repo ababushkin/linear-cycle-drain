@@ -19,7 +19,20 @@ from drain_cycle import linear
 from drain_cycle.linear import ExecutionPlan
 
 
-def _node(identifier: str, label_names: list[str], inverse_relations=None) -> dict:
+def _label_node(entry: "str | tuple[str, str]") -> dict:
+    """Build a wire-shape label node.
+
+    Pass a bare string for an ungrouped label (``parent`` is ``None``), or a
+    ``(name, group)`` tuple for a grouped label (``parent.name`` set to
+    ``group``).
+    """
+    if isinstance(entry, tuple):
+        name, group = entry
+        return {"name": name, "parent": {"name": group}}
+    return {"name": entry}
+
+
+def _node(identifier: str, label_names: "list[str | tuple[str, str]]", inverse_relations=None) -> dict:
     return {
         "id": f"id-{identifier}",
         "identifier": identifier,
@@ -27,7 +40,7 @@ def _node(identifier: str, label_names: list[str], inverse_relations=None) -> di
         "description": "",
         "sortOrder": 1.0,
         "state": {"type": "unstarted", "name": "Todo"},
-        "labels": {"nodes": [{"name": n} for n in label_names]},
+        "labels": {"nodes": [_label_node(e) for e in label_names]},
         "inverseRelations": {"nodes": inverse_relations or []},
     }
 
@@ -186,3 +199,59 @@ def test_pending_issues_returns_execution_plan_when_empty(
     assert isinstance(plan, ExecutionPlan)
     assert plan.order == []
     assert plan.deferred == []
+
+
+def test_pending_issues_projection_requests_label_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[str] = []
+
+    def fake_post(query: str, variables: dict | None = None) -> dict:
+        captured.append(query)
+        return {"issues": {"nodes": []}}
+
+    monkeypatch.setattr(linear, "_post", fake_post)
+    linear.pending_issues("cycle-id")
+    (query,) = captured
+    assert "parent { name }" in query
+
+
+def test_pending_issues_renders_grouped_labels_with_group_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_post(query: str, variables: dict | None = None) -> dict:
+        return {
+            "issues": {
+                "nodes": [
+                    _node("ABA-A", [
+                        ("agent-skills-workflow", "repo"),
+                        ("sonnet", "model"),
+                        ("1-build-parallel", "wave"),
+                    ])
+                ]
+            }
+        }
+
+    monkeypatch.setattr(linear, "_post", fake_post)
+    plan = linear.pending_issues("cycle-id")
+    assert plan.order[0]["labels"] == [
+        "repo:agent-skills-workflow",
+        "model:sonnet",
+        "wave:1-build-parallel",
+    ]
+
+
+def test_pending_issues_keeps_ungrouped_label_name_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flat ``repo:<name>`` labels and bare labels survive unchanged (backward compat)."""
+    def fake_post(query: str, variables: dict | None = None) -> dict:
+        return {
+            "issues": {
+                "nodes": [_node("ABA-A", ["repo:drain-cycle", "bug"])]
+            }
+        }
+
+    monkeypatch.setattr(linear, "_post", fake_post)
+    plan = linear.pending_issues("cycle-id")
+    assert plan.order[0]["labels"] == ["repo:drain-cycle", "bug"]

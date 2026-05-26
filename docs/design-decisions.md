@@ -42,6 +42,8 @@ Each `drain-cycle` invocation writes its own run-log file at `~/.drain-cycle/run
 
 The orchestrator used to be single-repo by construction: `repo = Path.cwd()`, every worktree under `<cwd>/.worktrees/`. Cycles in this workspace span multiple repos by design — `linear-workflow.md` makes "Affected repos" part of the six initiative-readiness fields, and the Ops slot deliberately holds cross-repo maintenance issues. Each issue now carries a `repo:<name>` Linear label; `~/.drain-cycle/repos.yml` maps the name to an absolute path; the operator runs `drain-cycle` from anywhere.
 
+**Grouped labels are supported.** The Linear workspace uses label groups (`repo`, `model`, `wave`, …). A child label in the `repo` group — e.g. the leaf `drain-cycle` under the `repo` group — is indistinguishable from a flat `repo:drain-cycle` label to `repos.resolve`. The `pending_issues` query fetches `labels { nodes { name parent { name } } }` and renders each grouped node as `"<group>:<name>"` via `_label_name`; ungrouped nodes keep their bare name (backward-compatible with any literal `repo:<name>` labels already in use). The same rendering applies to `model` group children for `model.resolve` (§7).
+
 **Alternatives considered.**
 
 - *Description-body encoding* (e.g. a `Repo: drain-cycle` line in the markdown). The description is the most-edited surface, agents rewrite it routinely, and there's no schema enforcement. A label is one structured field with one value — Linear validates it, and a label rename triggers a clear "this label doesn't exist" error rather than silently drifting to a wrong repo.
@@ -74,6 +76,8 @@ The orchestrator used to be single-repo by construction: `repo = Path.cwd()`, ev
 A spawned `claude -p` worker inherits whatever model the operator has globally pinned. In the diagnosed quota-burn run all five workers ran on `claude-opus-4-7` (the operator's global pin), and Opus was the single largest cost multiplier of the ~108M-token spend. Workers now default to `claude-sonnet-4-6`, passed explicitly via `--model`; an individual issue opts up (or down) with a `model:<alias>` Linear label, mirroring the `repo:<name>` mechanism. Known aliases (`sonnet`/`opus`/`haiku`) map to full ids; an unrecognised value is passed to `claude --model` verbatim.
 
 **Why lenient, not strict.** Unlike `repo:` resolution — where a missing label is a hard halt because there is no safe default target — model resolution always has a safe fallback. So it never raises: no label, an unknown alias, or conflicting `model:` labels all fall back to the default rather than halting an unattended cycle over a label typo. The model actually used is recorded in the run log, so a mis-labelled issue surfaces after the fact instead of stalling the run.
+
+**Grouped model labels.** A child of the Linear `model` group — e.g. the leaf `sonnet` under `model` — renders as `model:sonnet` via the same `_label_name` projection described in §5. `model.resolve` sees it identically to a flat `model:sonnet` label.
 
 **Alternatives considered.** (A) Keep inheriting the global pin — rejected, it is exactly what caused the burn and gives the operator no per-issue control. (B) A single global `--model` flag with no per-issue override — simpler, but a cycle legitimately mixes cheap mechanical issues with a few that warrant Opus; per-issue is the right grain. (C) Raise on ambiguous labels like `repo:` does — rejected, halting a whole unattended cycle over a duplicate label is worse than silently taking the cheap, safe default.
 
