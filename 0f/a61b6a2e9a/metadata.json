@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "0fa61b6a2e9a",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "drain_cycle/linear.py",
+    "tests/test_linear_pending_issues.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0f/a61b6a2e9a/0/metadata.json",
+      "transcript": "/0f/a61b6a2e9a/0/full.jsonl",
+      "content_hash": "/0f/a61b6a2e9a/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 5773,
+    "cache_read_tokens": 929119,
+    "output_tokens": 4410,
+    "api_call_count": 8
+  }
+}
