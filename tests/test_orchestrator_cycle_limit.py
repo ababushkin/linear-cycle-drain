@@ -29,13 +29,12 @@ _TEST_REPO_NAME = "test-repo"
 _TOKENS_PER_ISSUE = 6_000_000
 
 
-def _issue(identifier: str, priority: int, sort_order: float) -> dict:
+def _issue(identifier: str, sort_order: float) -> dict:
     return {
         "id": f"id-{identifier}",
         "identifier": identifier,
         "title": f"Title for {identifier}",
         "description": f"Body for {identifier}",
-        "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
         "labels": [f"repo:{_TEST_REPO_NAME}"],
@@ -97,9 +96,9 @@ def test_orchestrator_stops_cycle_when_cycle_token_cap_breached(
 
     # Three issues, each Done at 6M tokens. Cap the cycle at 10M: A leaves
     # the total at 6M (continue), B at 12M (breach) — C is never attempted.
-    a = _issue("ABA-A", priority=1, sort_order=1.0)
-    b = _issue("ABA-B", priority=2, sort_order=2.0)
-    c = _issue("ABA-C", priority=3, sort_order=3.0)
+    a = _issue("ABA-A", sort_order=1.0)
+    b = _issue("ABA-B", sort_order=2.0)
+    c = _issue("ABA-C", sort_order=3.0)
     raw_issues = [a, b, c]
     issues_by_id = {i["id"]: i for i in raw_issues}
     done_marker = tmp_path / "done.txt"
@@ -112,7 +111,7 @@ def test_orchestrator_stops_cycle_when_cycle_token_cap_breached(
 
     monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
     monkeypatch.setattr(
-        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+        linear, "pending_issues", lambda cycle_id: linear._plan(raw_issues)
     )
     monkeypatch.setattr(linear, "get_issue", fake_get_issue)
     monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)

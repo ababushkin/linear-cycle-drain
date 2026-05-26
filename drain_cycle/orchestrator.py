@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import linear, model, progress, prompt, runlog, worker, worktree
 from .limits import Limits, check_cycle
+from .linear import DependencyCycleError
 from .repos import RepoResolutionError, Repos
 
 _DONE_STATE_TYPE = "completed"
@@ -111,13 +112,33 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
     debug = _debug_enabled()
     cycle_id = linear.current_cycle_id()
     log = runlog.RunLog(cycle_id=cycle_id)
-    issues = linear.pending_issues(cycle_id)
-    if not issues:
+    try:
+        plan = linear.pending_issues(cycle_id)
+    except DependencyCycleError as exc:
+        halt_reason = f"Halt: dependency cycle — {exc}"
+        log.set_cycle_halt(halt_reason)
+        print(halt_reason, file=sys.stderr)
+        return 1
+
+    if not plan.order and not plan.deferred:
         print(f"Cycle {cycle_id} has no Todo/Backlog issues — nothing to do.")
         return 0
 
-    total = len(issues)
-    for index, issue in enumerate(issues):
+    for deferred in plan.deferred:
+        issue = deferred["issue"]
+        blocker_id = deferred["blocker_identifier"]
+        blocker_state = deferred["blocker_state_type"]
+        print(
+            f"drain-cycle: deferred {issue['identifier']}"
+            f" — blocked by {blocker_id} ({blocker_state})",
+            file=sys.stderr,
+        )
+
+    if not plan.order:
+        return 0
+
+    total = len(plan.order)
+    for index, issue in enumerate(plan.order):
         identifier = issue["identifier"]
         print(f"drain-cycle: picked {identifier}: {issue['title']}", file=sys.stderr)
 

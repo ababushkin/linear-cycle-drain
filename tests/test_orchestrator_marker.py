@@ -19,13 +19,12 @@ from drain_cycle import limits, linear, orchestrator, progress, repos
 _TEST_REPO_NAME = "test-repo"
 
 
-def _issue(identifier: str, priority: int, sort_order: float) -> dict:
+def _issue(identifier: str, sort_order: float) -> dict:
     return {
         "id": f"id-{identifier}",
         "identifier": identifier,
         "title": f"Title for {identifier}",
         "description": f"Body for {identifier}",
-        "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
         "labels": [f"repo:{_TEST_REPO_NAME}"],
@@ -69,7 +68,7 @@ def _stub_linear_done(monkeypatch, raw_issues: list[dict], done_marker: Path) ->
         return "stub-cycle"
 
     def fake_pending_issues(cycle_id: str) -> list[dict]:
-        return linear._sort_pending_issues(raw_issues)
+        return linear._plan(raw_issues)
 
     def fake_get_issue(issue_id: str) -> dict:
         completed = done_marker.read_text().splitlines() if done_marker.exists() else []
@@ -91,7 +90,7 @@ def _stub_linear_noop(monkeypatch, raw_issues: list[dict]) -> None:
         return "stub-cycle"
 
     def fake_pending_issues(cycle_id: str) -> list[dict]:
-        return linear._sort_pending_issues(raw_issues)
+        return linear._plan(raw_issues)
 
     def fake_get_issue(issue_id: str) -> dict:
         return issues_by_id[issue_id]
@@ -112,7 +111,7 @@ def test_marker_written_before_spawn_and_cleared_after_done(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    issue = _issue("ABA-1", priority=1, sort_order=1.0)
+    issue = _issue("ABA-1", sort_order=1.0)
     done_marker = tmp_path / "done.txt"
     _stub_linear_done(monkeypatch, [issue], done_marker)
 
@@ -153,7 +152,7 @@ def test_marker_cleared_after_not_done_halt(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    issue = _issue("ABA-HALT", priority=1, sort_order=1.0)
+    issue = _issue("ABA-HALT", sort_order=1.0)
     _stub_linear_noop(monkeypatch, [issue])
 
     noop_script = _write_noop_script(tmp_path)
@@ -180,14 +179,13 @@ def test_marker_not_written_on_pre_spawn_resolution_failure(
         "identifier": "ABA-X",
         "title": "Unresolvable",
         "description": "",
-        "priority": 1,
         "sortOrder": 1.0,
         "state": {"type": "unstarted", "name": "Todo"},
         "labels": ["repo:nonexistent-repo"],
     }
     monkeypatch.setattr(linear, "current_cycle_id", lambda: "c")
     monkeypatch.setattr(
-        linear, "pending_issues", lambda _: linear._sort_pending_issues([issue])
+        linear, "pending_issues", lambda _: linear._plan([issue])
     )
     monkeypatch.setattr(linear, "set_state", lambda *_: None)
 
@@ -207,8 +205,8 @@ def test_marker_index_and_total_correct_for_multiple_issues(
     monkeypatch.setenv("HOME", str(tmp_path))
 
     issues = [
-        _issue("ABA-1", priority=1, sort_order=1.0),
-        _issue("ABA-2", priority=2, sort_order=2.0),
+        _issue("ABA-1", sort_order=1.0),
+        _issue("ABA-2", sort_order=2.0),
     ]
     done_marker = tmp_path / "done.txt"
     _stub_linear_done(monkeypatch, issues, done_marker)
@@ -246,7 +244,7 @@ def test_marker_progress_updated_via_on_progress_callback(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    issue = _issue("ABA-PROG", priority=1, sort_order=1.0)
+    issue = _issue("ABA-PROG", sort_order=1.0)
     done_marker = tmp_path / "done.txt"
     _stub_linear_done(monkeypatch, [issue], done_marker)
 

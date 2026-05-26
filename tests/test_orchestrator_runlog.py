@@ -26,7 +26,6 @@ from drain_cycle import linear, orchestrator, repos
 
 def _issue(
     identifier: str,
-    priority: int,
     sort_order: float,
     *,
     repo_name: str = "test-repo",
@@ -36,7 +35,6 @@ def _issue(
         "identifier": identifier,
         "title": f"Title for {identifier}",
         "description": f"Body for {identifier}",
-        "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
         "labels": [f"repo:{repo_name}"],
@@ -65,8 +63,8 @@ def test_orchestrator_writes_runlog_with_one_entry_per_successful_issue(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
-    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
+    second = _issue("ABA-SECOND", sort_order=2.0)
     raw_issues = [first, second]
     expected_order = [i["identifier"] for i in raw_issues]
     issues_by_id = {i["id"]: i for i in raw_issues}
@@ -75,9 +73,9 @@ def test_orchestrator_writes_runlog_with_one_entry_per_successful_issue(
     def fake_current_cycle_id() -> str:
         return "stub-cycle-id"
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
+    def fake_pending_issues(cycle_id: str):
         completed = _completed_identifiers(done_marker)
-        return linear._sort_pending_issues(
+        return linear._plan(
             [i for i in raw_issues if i["identifier"] not in completed]
         )
 
@@ -164,14 +162,14 @@ def test_runlog_done_entry_carries_worker_usage_from_stream(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    only = _issue("ABA-ONE", priority=1, sort_order=1.0)
+    only = _issue("ABA-ONE", sort_order=1.0)
     raw_issues = [only]
     issues_by_id = {i["id"]: i for i in raw_issues}
     done_marker = tmp_path / "done-identifiers.txt"
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
+    def fake_pending_issues(cycle_id: str):
         completed = _completed_identifiers(done_marker)
-        return linear._sort_pending_issues(
+        return linear._plan(
             [i for i in raw_issues if i["identifier"] not in completed]
         )
 

@@ -35,7 +35,6 @@ _TEST_REPO_NAME = "test-repo"
 
 def _issue(
     identifier: str,
-    priority: int,
     sort_order: float,
     *,
     repo_name: str = _TEST_REPO_NAME,
@@ -45,7 +44,6 @@ def _issue(
         "identifier": identifier,
         "title": f"Title for {identifier}",
         "description": f"Body for {identifier}",
-        "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
         "labels": [f"repo:{repo_name}"],
@@ -80,8 +78,8 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
 
     # Two issues; the first will be picked, the spawn will exit without
     # marking it Done. The second must remain untouched.
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
-    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
+    second = _issue("ABA-SECOND", sort_order=2.0)
     raw_issues = [first, second]
     issues_by_id = {i["id"]: i for i in raw_issues}
 
@@ -91,7 +89,7 @@ def test_orchestrator_halts_when_spawn_leaves_issue_not_done(
         return "stub-cycle"
 
     def fake_pending_issues(cycle_id: str) -> list[dict]:
-        return linear._sort_pending_issues(raw_issues)
+        return linear._plan(raw_issues)
 
     def fake_get_issue(issue_id: str) -> dict:
         # The fake claude script never flips state, so this always returns
@@ -172,8 +170,8 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
-    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
+    second = _issue("ABA-SECOND", sort_order=2.0)
     raw_issues = [first, second]
     issues_by_id = {i["id"]: i for i in raw_issues}
 
@@ -181,7 +179,7 @@ def test_orchestrator_runlog_records_halted_issue_with_non_done_state(
         return "stub-cycle-id"
 
     def fake_pending_issues(cycle_id: str) -> list[dict]:
-        return linear._sort_pending_issues(raw_issues)
+        return linear._plan(raw_issues)
 
     def fake_get_issue(issue_id: str) -> dict:
         return issues_by_id[issue_id]
@@ -282,15 +280,15 @@ def test_orchestrator_records_halt_when_setup_raises_before_spawn(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
-    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
+    second = _issue("ABA-SECOND", sort_order=2.0)
     raw_issues = [first, second]
 
     def fake_current_cycle_id() -> str:
         return "stub-cycle-id"
 
     def fake_pending_issues(cycle_id: str) -> list[dict]:
-        return linear._sort_pending_issues(raw_issues)
+        return linear._plan(raw_issues)
 
     def failing_set_state(issue_id: str, state_name: str) -> None:
         raise RuntimeError("Linear outage simulated")
@@ -354,15 +352,15 @@ def test_orchestrator_records_halt_when_claude_subprocess_times_out(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
-    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
+    second = _issue("ABA-SECOND", sort_order=2.0)
     raw_issues = [first, second]
 
     def fake_current_cycle_id() -> str:
         return "stub-cycle-id"
 
     def fake_pending_issues(cycle_id: str) -> list[dict]:
-        return linear._sort_pending_issues(raw_issues)
+        return linear._plan(raw_issues)
 
     issues_by_id = {i["id"]: i for i in raw_issues}
 
@@ -422,7 +420,7 @@ def test_orchestrator_reverts_state_on_timeout_halt(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
     raw_issues = [first]
     issues_by_id = {i["id"]: i for i in raw_issues}
     set_state_calls: list[tuple[str, str]] = []
@@ -444,7 +442,7 @@ def test_orchestrator_reverts_state_on_timeout_halt(
 
     monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
     monkeypatch.setattr(
-        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+        linear, "pending_issues", lambda cycle_id: linear._plan(raw_issues)
     )
     monkeypatch.setattr(linear, "set_state", fake_set_state)
     monkeypatch.setattr(linear, "get_issue", fake_get_issue)
@@ -495,7 +493,7 @@ def test_orchestrator_reverts_state_on_post_spawn_not_done(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
     raw_issues = [first]
     issues_by_id = {i["id"]: i for i in raw_issues}
     set_state_calls: list[tuple[str, str]] = []
@@ -515,7 +513,7 @@ def test_orchestrator_reverts_state_on_post_spawn_not_done(
 
     monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
     monkeypatch.setattr(
-        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+        linear, "pending_issues", lambda cycle_id: linear._plan(raw_issues)
     )
     monkeypatch.setattr(linear, "set_state", fake_set_state)
     monkeypatch.setattr(linear, "get_issue", fake_get_issue)
@@ -558,7 +556,7 @@ def test_orchestrator_halt_records_revert_failure_non_fatally(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
     raw_issues = [first]
     issues_by_id = {i["id"]: i for i in raw_issues}
     set_state_calls: list[tuple[str, str]] = []
@@ -581,7 +579,7 @@ def test_orchestrator_halt_records_revert_failure_non_fatally(
 
     monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
     monkeypatch.setattr(
-        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+        linear, "pending_issues", lambda cycle_id: linear._plan(raw_issues)
     )
     monkeypatch.setattr(linear, "set_state", fake_set_state)
     monkeypatch.setattr(linear, "get_issue", fake_get_issue)
@@ -630,7 +628,7 @@ def test_orchestrator_setup_failure_does_not_attempt_revert(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
     raw_issues = [first]
     set_state_calls: list[tuple[str, str]] = []
 
@@ -640,7 +638,7 @@ def test_orchestrator_setup_failure_does_not_attempt_revert(
 
     monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle-id")
     monkeypatch.setattr(
-        linear, "pending_issues", lambda cycle_id: linear._sort_pending_issues(raw_issues)
+        linear, "pending_issues", lambda cycle_id: linear._plan(raw_issues)
     )
     monkeypatch.setattr(linear, "set_state", failing_set_state)
     monkeypatch.setattr(
@@ -676,8 +674,8 @@ def test_orchestrator_rerun_after_halt_picks_up_same_issue(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-FIRST", priority=1, sort_order=1.0)
-    second = _issue("ABA-SECOND", priority=2, sort_order=2.0)
+    first = _issue("ABA-FIRST", sort_order=1.0)
+    second = _issue("ABA-SECOND", sort_order=2.0)
     raw_issues = [first, second]
     issues_by_id = {i["id"]: i for i in raw_issues}
     live_states: dict[str, dict[str, str]] = {
@@ -691,9 +689,9 @@ def test_orchestrator_rerun_after_halt_picks_up_same_issue(
             "name": state_name,
         }
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
+    def fake_pending_issues(cycle_id: str):
         # Mirror the real filter: only Backlog/Todo (unstarted) come back.
-        return linear._sort_pending_issues(
+        return linear._plan(
             [
                 {**issues_by_id[i["id"]], "state": live_states[i["id"]]}
                 for i in raw_issues

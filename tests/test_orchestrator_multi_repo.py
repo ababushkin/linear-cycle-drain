@@ -30,7 +30,6 @@ def _issue(
     identifier: str,
     repo_name: str,
     *,
-    priority: int = 1,
     sort_order: float = 1.0,
     labels: list[str] | None = None,
 ) -> dict:
@@ -39,7 +38,6 @@ def _issue(
         "identifier": identifier,
         "title": f"Title for {identifier}",
         "description": f"Body for {identifier}",
-        "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
         "labels": [f"repo:{repo_name}"] if labels is None else labels,
@@ -80,15 +78,15 @@ def test_orchestrator_runs_each_issue_in_its_labelled_repo(
     _init_repo(repo_b)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    first = _issue("ABA-A", repo_name="alpha", priority=1, sort_order=1.0)
-    second = _issue("ABA-B", repo_name="beta", priority=2, sort_order=2.0)
+    first = _issue("ABA-A", repo_name="alpha", sort_order=1.0)
+    second = _issue("ABA-B", repo_name="beta", sort_order=2.0)
     raw_issues = [first, second]
     issues_by_id = {i["id"]: i for i in raw_issues}
     marker = tmp_path / "picked.tsv"
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
+    def fake_pending_issues(cycle_id: str):
         completed = {line.split("\t", 1)[0] for line in _lines(marker)}
-        return linear._sort_pending_issues(
+        return linear._plan(
             [i for i in raw_issues if i["identifier"] not in completed]
         )
 
@@ -156,8 +154,8 @@ def _run_resolution_halt(
 
     issue = _issue("ABA-1", repo_name="ignored", labels=issue_labels)
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
-        return [issue]
+    def fake_pending_issues(cycle_id: str):
+        return linear._plan([issue])
 
     def forbidden_set_state(issue_id: str, state_name: str) -> None:
         raise AssertionError(

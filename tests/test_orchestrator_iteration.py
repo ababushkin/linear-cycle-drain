@@ -35,7 +35,6 @@ from drain_cycle import linear, orchestrator, repos, runlog
 
 def _issue(
     identifier: str,
-    priority: int,
     sort_order: float,
     *,
     repo_name: str = "test-repo",
@@ -45,7 +44,6 @@ def _issue(
         "identifier": identifier,
         "title": f"Title for {identifier}",
         "description": f"Body for {identifier}",
-        "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
         "labels": [f"repo:{repo_name}"],
@@ -75,17 +73,16 @@ def test_orchestrator_drains_every_issue_in_sorted_order(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    # Three issues — chosen so a "naïve" iteration order (input order) and
-    # the priority sort disagree, proving the loop consumes the *sorted*
-    # list rather than the unsorted one.
+    # Three issues — chosen so input order and sortOrder order disagree,
+    # proving the loop consumes the *planned* order rather than input order.
     raw_issues = [
-        _issue("ABA-X", priority=3, sort_order=2.0),  # Medium
-        _issue("ABA-Y", priority=1, sort_order=1.0),  # Urgent — runs first
-        _issue("ABA-Z", priority=2, sort_order=3.0),  # High
+        _issue("ABA-X", sort_order=2.0),
+        _issue("ABA-Y", sort_order=1.0),  # lowest sortOrder — runs first
+        _issue("ABA-Z", sort_order=3.0),
     ]
-    sorted_issues = linear._sort_pending_issues(raw_issues)
-    expected_order = [i["identifier"] for i in sorted_issues]
-    assert expected_order == ["ABA-Y", "ABA-Z", "ABA-X"]
+    plan = linear._plan(raw_issues)
+    expected_order = [i["identifier"] for i in plan.order]
+    assert expected_order == ["ABA-Y", "ABA-X", "ABA-Z"]
 
     issues_by_id = {i["id"]: i for i in raw_issues}
     done_marker = tmp_path / "done-identifiers.txt"
@@ -93,13 +90,9 @@ def test_orchestrator_drains_every_issue_in_sorted_order(
     def fake_current_cycle_id() -> str:
         return "stub-cycle"
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
-        # Re-sort each call (mirrors the real client, which sorts the wire
-        # response) and exclude anything the fake claude script has already
-        # marked Done — so an accidental re-fetch can't re-feed the same
-        # issue back into the loop.
+    def fake_pending_issues(cycle_id: str):
         completed = _completed_identifiers(done_marker)
-        return linear._sort_pending_issues(
+        return linear._plan(
             [i for i in raw_issues if i["identifier"] not in completed]
         )
 
@@ -151,8 +144,8 @@ def test_orchestrator_passes_resolved_model_to_worker(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    default_issue = _issue("ABA-DEF", priority=1, sort_order=1.0)
-    opus_issue = _issue("ABA-OPUS", priority=2, sort_order=2.0)
+    default_issue = _issue("ABA-DEF", sort_order=1.0)
+    opus_issue = _issue("ABA-OPUS", sort_order=2.0)
     opus_issue["labels"] = ["repo:test-repo", "model:opus"]
     raw_issues = [default_issue, opus_issue]
 
@@ -161,9 +154,9 @@ def test_orchestrator_passes_resolved_model_to_worker(
     argv_dir = tmp_path / "argv"
     argv_dir.mkdir()
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
+    def fake_pending_issues(cycle_id: str):
         completed = _completed_identifiers(done_marker)
-        return linear._sort_pending_issues(
+        return linear._plan(
             [i for i in raw_issues if i["identifier"] not in completed]
         )
 
@@ -210,16 +203,16 @@ def test_orchestrator_links_project_config_into_worker_cwd(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    issue = _issue("ABA-CFG", priority=1, sort_order=1.0)
+    issue = _issue("ABA-CFG", sort_order=1.0)
     raw_issues = [issue]
     issues_by_id = {i["id"]: i for i in raw_issues}
     done_marker = tmp_path / "done-identifiers.txt"
     probe_dir = tmp_path / "probe"
     probe_dir.mkdir()
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
+    def fake_pending_issues(cycle_id: str):
         completed = _completed_identifiers(done_marker)
-        return [i for i in raw_issues if i["identifier"] not in completed]
+        return linear._plan([i for i in raw_issues if i["identifier"] not in completed])
 
     def fake_get_issue(issue_id: str) -> dict:
         issue = issues_by_id[issue_id]
@@ -256,16 +249,16 @@ def _captured_argv_for_one_issue(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    issue = _issue(identifier, priority=1, sort_order=1.0)
+    issue = _issue(identifier, sort_order=1.0)
     raw_issues = [issue]
     issues_by_id = {i["id"]: i for i in raw_issues}
     done_marker = tmp_path / "done-identifiers.txt"
     argv_dir = tmp_path / "argv"
     argv_dir.mkdir()
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
+    def fake_pending_issues(cycle_id: str):
         completed = _completed_identifiers(done_marker)
-        return [i for i in raw_issues if i["identifier"] not in completed]
+        return linear._plan([i for i in raw_issues if i["identifier"] not in completed])
 
     def fake_get_issue(issue_id: str) -> dict:
         issue = issues_by_id[issue_id]

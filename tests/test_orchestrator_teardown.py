@@ -20,7 +20,6 @@ _TEST_REPO_NAME = "test-repo"
 
 def _issue(
     identifier: str,
-    priority: int,
     sort_order: float,
     *,
     repo_name: str = _TEST_REPO_NAME,
@@ -30,7 +29,6 @@ def _issue(
         "identifier": identifier,
         "title": f"Title for {identifier}",
         "description": f"Body for {identifier}",
-        "priority": priority,
         "sortOrder": sort_order,
         "state": {"type": "unstarted", "name": "Todo"},
         "labels": [f"repo:{repo_name}"],
@@ -67,15 +65,16 @@ def test_orchestrator_continues_and_records_teardown_failure(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    iss = _issue("ABA-FIRST", priority=1, sort_order=1.0)
+    iss = _issue("ABA-FIRST", sort_order=1.0)
     raw_issues = [iss]
     issues_by_id = {iss["id"]: iss}
     done_marker = tmp_path / "done-identifiers.txt"
 
-    def fake_pending_issues(cycle_id: str) -> list[dict]:
+    def fake_pending_issues(cycle_id: str):
+        from drain_cycle.linear import _plan
         if iss["identifier"] in _completed_identifiers(done_marker):
-            return []
-        return [iss]
+            return _plan([])
+        return _plan([iss])
 
     def fake_get_issue(issue_id: str) -> dict:
         i = issues_by_id[issue_id]
