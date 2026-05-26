@@ -43,7 +43,7 @@ mkdir -p ~/.drain-cycle
 echo 'LINEAR_API_KEY=lin_api_…' > ~/.drain-cycle/.env
 ```
 
-The CLI reads the key from the first source that defines it: a shell-exported `LINEAR_API_KEY` wins, then `~/.drain-cycle/.env`, then a `.env` at the repo root (a dev-checkout fallback the installed tool never sees). Export it in your shell rc instead of the file if you prefer.
+The CLI reads the key from the first source that defines it: a shell-exported `LINEAR_API_KEY` wins, then `~/.drain-cycle/.env`, then a `.env` at the repo root (a dev-checkout fallback the installed tool never sees). Export it in your shell rc instead of the file if you prefer. The same precedence applies to the optional `HONEYCOMB_API_KEY` (see [Telemetry](#telemetry-optional)).
 
 Create `~/.drain-cycle/repos.yml` mapping each label name to the repo's absolute path on disk:
 
@@ -207,6 +207,16 @@ DRAIN_CYCLE_DEBUG=1 drain-cycle
 ```
 
 Each spawned session then gets `claude`'s `--debug-file`, writing one `<cycle-id>-<run-timestamp>-<issue>.debug.log` per issue beside the run log in `~/.drain-cycle/runs/`. It is off by default. Debug output goes to the file, so it doesn't disturb the token-usage stream the run log records. These captures are verbose and aren't pruned automatically (like the run logs themselves); delete them by hand when you're done investigating.
+
+## Telemetry (optional)
+
+drain-cycle can emit OpenTelemetry traces to [Honeycomb](https://www.honeycomb.io/) so you can see where a drain spends its time and tokens. It is **off unless `HONEYCOMB_API_KEY` is set** — with no key, tracing is a no-op and the tool takes no runtime network dependency.
+
+```bash
+echo 'HONEYCOMB_API_KEY=hcaik_…' >> ~/.drain-cycle/.env
+```
+
+Each invocation then emits one trace: a `drain.cycle` root span, a `drain.issue` span per attempted issue, and under those the spawned-session (`drain.worker.session`, carrying token/cost/turn usage), worktree (`drain.worktree.add`/`.remove`), and Linear (`linear.*`, wrapping the auto-instrumented `httpx` calls) spans. Traces land in a Honeycomb dataset named `drain-cycle`. Optional overrides: `HONEYCOMB_API_ENDPOINT` (default `https://api.honeycomb.io`; set the EU host for an EU team) and `OTEL_SERVICE_NAME` (default `drain-cycle`, which is also the dataset). See [`docs/design-decisions.md`](docs/design-decisions.md) §13.
 
 ## Design
 

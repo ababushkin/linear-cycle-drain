@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from . import telemetry
+
 _ENDPOINT = "https://api.linear.app/graphql"
 _TEAM_NAME = "Personal"
 _PENDING_STATE_TYPES = ["backlog", "unstarted"]
@@ -33,21 +35,39 @@ class DependencyCycleError(RuntimeError):
         super().__init__(f"Dependency cycle among: {', '.join(identifiers)}")
 
 
-def _post(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
-    key = os.environ.get("LINEAR_API_KEY")
-    if not key:
-        raise RuntimeError("LINEAR_API_KEY is not set")
-    resp = httpx.post(
-        _ENDPOINT,
-        headers={"Authorization": key, "Content-Type": "application/json"},
-        json={"query": query, "variables": variables or {}},
-        timeout=30.0,
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    if "errors" in body:
-        raise RuntimeError(f"Linear GraphQL errors: {body['errors']}")
-    return body["data"]
+def _post(
+    query: str,
+    variables: dict[str, Any] | None = None,
+    *,
+    operation: str = "graphql",
+) -> dict[str, Any]:
+    """Execute one GraphQL request. ``operation`` names the span and the
+    ``linear.operation`` attribute so the five distinct calls (which all POST
+    to the same endpoint) stay separable in Honeycomb; the httpx transport is
+    auto-instrumented, so the raw HTTP POST appears as a child span."""
+    with telemetry.tracer.start_as_current_span(f"linear.{operation}") as span:
+        span.set_attribute("linear.operation", operation)
+        key = os.environ.get("LINEAR_API_KEY")
+        if not key:
+            telemetry.mark_error(span, "err-linear-no-api-key", "LINEAR_API_KEY is not set")
+            raise RuntimeError("LINEAR_API_KEY is not set")
+        resp = httpx.post(
+            _ENDPOINT,
+            headers={"Authorization": key, "Content-Type": "application/json"},
+            json={"query": query, "variables": variables or {}},
+            timeout=30.0,
+        )
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            span.set_attribute("http.response.status_code", resp.status_code)
+            telemetry.mark_error(span, "err-linear-http", str(exc))
+            raise
+        body = resp.json()
+        if "errors" in body:
+            telemetry.mark_error(span, "err-linear-graphql", "Linear GraphQL errors")
+            raise RuntimeError(f"Linear GraphQL errors: {body['errors']}")
+        return body["data"]
 
 
 def current_cycle_id() -> str:
@@ -64,6 +84,7 @@ def current_cycle_id() -> str:
         }
         """,
         {"name": _TEAM_NAME},
+        operation="current_cycle",
     )
     nodes = data["teams"]["nodes"]
     if not nodes:
@@ -220,6 +241,7 @@ def pending_issues(cycle_id: str) -> ExecutionPlan:
         }
         """,
         {"cycleId": cycle_id, "stateTypes": _PENDING_STATE_TYPES},
+        operation="pending_issues",
     )
     issues = data["issues"]["nodes"]
     for issue in issues:
@@ -251,6 +273,7 @@ def get_issue(issue_id: str) -> dict[str, Any]:
         }
         """,
         {"id": issue_id},
+        operation="get_issue",
     )
     issue = data["issue"]
     if issue is None:
@@ -275,6 +298,7 @@ def set_state(issue_id: str, state_name: str) -> None:
         }
         """,
         {"id": issue_id, "input": {"stateId": state_id}},
+        operation="set_state",
     )
     if not data["issueUpdate"]["success"]:
         raise RuntimeError(
@@ -298,6 +322,7 @@ def _resolve_state_id(state_name: str) -> str:
         }
         """,
         {"team": _TEAM_NAME, "name": state_name},
+        operation="resolve_state",
     )
     nodes = data["workflowStates"]["nodes"]
     if not nodes:

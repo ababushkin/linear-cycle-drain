@@ -25,7 +25,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from . import grade, limits, orchestrator, repos
+from . import grade, limits, orchestrator, repos, telemetry
 
 _REPO_ENV = Path(__file__).resolve().parent.parent / ".env"
 
@@ -53,6 +53,10 @@ _USAGE = (
 
 def main() -> None:
     _load_secrets()
+    # Telemetry reads its key from the environment just populated above; a
+    # no-op when HONEYCOMB_API_KEY is unset, so an unconfigured run is
+    # unchanged. Registers its own atexit flush, hence no teardown here.
+    telemetry.setup()
     argv = sys.argv[1:]
     if not argv:
         try:

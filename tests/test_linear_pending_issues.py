@@ -62,7 +62,7 @@ def test_pending_issues_projection_requests_inverse_relations(
 ) -> None:
     captured: list[str] = []
 
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         captured.append(query)
         return {"issues": {"nodes": []}}
 
@@ -79,7 +79,7 @@ def test_pending_issues_projection_does_not_request_priority(
 ) -> None:
     captured: list[str] = []
 
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         captured.append(query)
         return {"issues": {"nodes": []}}
 
@@ -92,7 +92,7 @@ def test_pending_issues_projection_does_not_request_priority(
 def test_pending_issues_flattens_labels_to_list_of_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {"issues": {"nodes": [_node("ABA-A", ["repo:drain-cycle", "bug"])]}}
 
     monkeypatch.setattr(linear, "_post", fake_post)
@@ -105,7 +105,7 @@ def test_pending_issues_flattens_labels_to_list_of_names(
 def test_pending_issues_returns_empty_list_when_issue_has_no_labels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {"issues": {"nodes": [_node("ABA-A", [])]}}
 
     monkeypatch.setattr(linear, "_post", fake_post)
@@ -116,7 +116,7 @@ def test_pending_issues_returns_empty_list_when_issue_has_no_labels(
 def test_pending_issues_flattens_blockers_from_inverse_relations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {
             "issues": {
                 "nodes": [
@@ -142,7 +142,7 @@ def test_pending_issues_ignores_non_blocks_relation_types(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """'related' and 'duplicate' inverse relations must not produce blockers."""
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {
             "issues": {
                 "nodes": [
@@ -165,7 +165,7 @@ def test_pending_issues_ignores_non_blocks_relation_types(
 def test_pending_issues_drops_raw_inverse_relations_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {"issues": {"nodes": [_node("ABA-A", [])]}}
 
     monkeypatch.setattr(linear, "_post", fake_post)
@@ -176,7 +176,7 @@ def test_pending_issues_drops_raw_inverse_relations_key(
 def test_pending_issues_preserves_other_fields_after_flattening(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {"issues": {"nodes": [_node("ABA-A", ["repo:x"])]}}
 
     monkeypatch.setattr(linear, "_post", fake_post)
@@ -191,7 +191,7 @@ def test_pending_issues_preserves_other_fields_after_flattening(
 def test_pending_issues_returns_execution_plan_when_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {"issues": {"nodes": []}}
 
     monkeypatch.setattr(linear, "_post", fake_post)
@@ -206,7 +206,7 @@ def test_pending_issues_projection_requests_label_parent(
 ) -> None:
     captured: list[str] = []
 
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         captured.append(query)
         return {"issues": {"nodes": []}}
 
@@ -219,7 +219,7 @@ def test_pending_issues_projection_requests_label_parent(
 def test_pending_issues_renders_grouped_labels_with_group_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {
             "issues": {
                 "nodes": [
@@ -245,7 +245,7 @@ def test_pending_issues_keeps_ungrouped_label_name_verbatim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Flat ``repo:<name>`` labels and bare labels survive unchanged (backward compat)."""
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         return {
             "issues": {
                 "nodes": [_node("ABA-A", ["repo:drain-cycle", "bug"])]

@@ -16,7 +16,7 @@ from drain_cycle import linear
 def test_set_state_resolves_name_then_calls_issue_update(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, dict]] = []
 
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         calls.append((query, variables or {}))
         if "workflowStates" in query:
             return {"workflowStates": {"nodes": [{"id": "state-uuid-123"}]}}
@@ -41,7 +41,7 @@ def test_set_state_resolves_name_then_calls_issue_update(monkeypatch: pytest.Mon
 
 
 def test_set_state_raises_when_state_name_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         assert "workflowStates" in query  # mutation must not be reached
         return {"workflowStates": {"nodes": []}}
 
@@ -54,7 +54,7 @@ def test_set_state_raises_when_state_name_not_found(monkeypatch: pytest.MonkeyPa
 def test_set_state_raises_when_mutation_returns_unsuccessful(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_post(query: str, variables: dict | None = None) -> dict:
+    def fake_post(query: str, variables: dict | None = None, *, operation: str = "graphql") -> dict:
         if "workflowStates" in query:
             return {"workflowStates": {"nodes": [{"id": "state-id"}]}}
         return {"issueUpdate": {"success": False}}

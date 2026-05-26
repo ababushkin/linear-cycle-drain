@@ -63,6 +63,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
+from opentelemetry.trace import Span
+
+from . import telemetry
 from .limits import Breach
 
 _STREAM_FLAGS = ["--verbose", "--output-format", "stream-json"]
@@ -160,69 +163,105 @@ def run_issue(
     cost_usd, elapsed_seconds)``. Callers use this for live progress display
     and the active-run marker update.
     """
-    # The prompt is the trailing positional; it must follow the value-taking
-    # ``--model`` / ``--max-budget-usd`` / ``--debug-file`` options, not sit
-    # between an option and its value.
-    argv = [*claude_cmd, *_STREAM_FLAGS, "--model", model]
-    if cost_limit_usd is not None:
-        argv += ["--max-budget-usd", f"{cost_limit_usd:g}"]
-    if debug_file is not None:
-        argv += ["--debug-file", str(debug_file)]
-    argv.append(prompt)
-    sink = passthrough if passthrough is not None else sys.stderr
-    accumulator = _UsageAccumulator()
+    with telemetry.tracer.start_as_current_span("drain.worker.session") as span:
+        span.set_attribute("worker.model", model)
+        # The prompt is the trailing positional; it must follow the value-taking
+        # ``--model`` / ``--max-budget-usd`` / ``--debug-file`` options, not sit
+        # between an option and its value.
+        argv = [*claude_cmd, *_STREAM_FLAGS, "--model", model]
+        if cost_limit_usd is not None:
+            argv += ["--max-budget-usd", f"{cost_limit_usd:g}"]
+        if debug_file is not None:
+            argv += ["--debug-file", str(debug_file)]
+        argv.append(prompt)
+        sink = passthrough if passthrough is not None else sys.stderr
+        accumulator = _UsageAccumulator()
 
-    started = time.monotonic()
-    proc = subprocess.Popen(
-        argv,
-        cwd=str(cwd),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        start_new_session=True,
-    )
+        started = time.monotonic()
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
 
-    # Wrap on_progress to inject elapsed_seconds computed from the start time.
-    _progress_cb: Callable[[int, int, int, float | None], None] | None = None
-    if on_progress is not None:
-        def _progress_cb(turns: int, cumulative: int, peak: int, cost_usd: float | None) -> None:
-            elapsed = time.monotonic() - started
-            on_progress(turns, cumulative, peak, cost_usd, elapsed)
+        # Wrap on_progress to inject elapsed_seconds computed from the start time.
+        _progress_cb: Callable[[int, int, int, float | None], None] | None = None
+        if on_progress is not None:
+            def _progress_cb(turns: int, cumulative: int, peak: int, cost_usd: float | None) -> None:
+                elapsed = time.monotonic() - started
+                on_progress(turns, cumulative, peak, cost_usd, elapsed)
 
-    reader = threading.Thread(
-        target=_drain_stream,
-        args=(proc.stdout, accumulator, sink, _progress_cb),
-        daemon=True,
-    )
-    reader.start()
+        reader = threading.Thread(
+            target=_drain_stream,
+            args=(proc.stdout, accumulator, sink, _progress_cb),
+            daemon=True,
+        )
+        reader.start()
 
-    breach = _monitor(
-        proc,
-        accumulator,
-        started=started,
-        token_limit=token_limit,
-        time_limit_seconds=time_limit_seconds,
-        poll_interval_seconds=poll_interval_seconds,
-    )
-    if breach is not None:
-        _kill_process_group(proc)
-        proc.wait()
-    reader.join(timeout=_READER_JOIN_TIMEOUT_SECONDS)
-    duration = time.monotonic() - started
+        breach = _monitor(
+            proc,
+            accumulator,
+            started=started,
+            token_limit=token_limit,
+            time_limit_seconds=time_limit_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        if breach is not None:
+            _kill_process_group(proc)
+            proc.wait()
+        reader.join(timeout=_READER_JOIN_TIMEOUT_SECONDS)
+        duration = time.monotonic() - started
 
-    cost_usd, num_turns, session_id, is_error = accumulator.summary()
-    return WorkerResult(
-        exit_code=proc.returncode,
-        breach=breach,
-        duration_seconds=duration,
-        model=model,
-        usage=accumulator.usage(),
-        cost_usd=cost_usd,
-        num_turns=num_turns,
-        session_id=session_id,
-        is_error=is_error,
-    )
+        cost_usd, num_turns, session_id, is_error = accumulator.summary()
+        result = WorkerResult(
+            exit_code=proc.returncode,
+            breach=breach,
+            duration_seconds=duration,
+            model=model,
+            usage=accumulator.usage(),
+            cost_usd=cost_usd,
+            num_turns=num_turns,
+            session_id=session_id,
+            is_error=is_error,
+        )
+        _annotate_worker_span(span, result)
+        return result
+
+
+def _annotate_worker_span(span: Span, result: WorkerResult) -> None:
+    """Record a finished session's usage onto its span.
+
+    Token totals, cost, turn count, and the session id become attributes so a
+    drain's spend is queryable in Honeycomb (HEATMAP cost, GROUP BY model). A
+    crossed cap is marked as an error with the breach's scope/metric/limit/
+    observed broken out and a static slug — so a guardrail kill is filterable
+    and ties back to the worker's monitor loop. ``is_error`` is the claude
+    session's own terminal flag, distinct from a breach kill.
+    """
+    usage = result.usage
+    span.set_attribute("worker.exit_code", result.exit_code)
+    span.set_attribute("worker.duration_seconds", result.duration_seconds)
+    span.set_attribute("worker.tokens.cumulative", usage.get("cumulative", 0))
+    span.set_attribute("worker.tokens.peak_context", usage.get("peak_context", 0))
+    if result.num_turns is not None:
+        span.set_attribute("worker.num_turns", result.num_turns)
+    if result.cost_usd is not None:
+        span.set_attribute("worker.cost_usd", result.cost_usd)
+    if result.session_id is not None:
+        span.set_attribute("worker.session_id", result.session_id)
+    if result.is_error is not None:
+        span.set_attribute("worker.is_error", result.is_error)
+    if result.breach is not None:
+        breach = result.breach
+        span.set_attribute("worker.breach.scope", breach.scope)
+        span.set_attribute("worker.breach.metric", breach.metric)
+        span.set_attribute("worker.breach.limit", breach.limit)
+        span.set_attribute("worker.breach.observed", breach.observed)
+        telemetry.mark_error(span, "err-worker-breach", breach.describe())
 
 
 def _monitor(

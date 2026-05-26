@@ -13,7 +13,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import linear, model, progress, prompt, runlog, worker, worktree
+from opentelemetry.trace import Span
+
+from . import linear, model, progress, prompt, runlog, telemetry, worker, worktree
 from .limits import Limits, check_cycle
 from .linear import DependencyCycleError
 from .repos import RepoResolutionError, Repos
@@ -107,20 +109,37 @@ def _debug_enabled() -> bool:
 
 
 def run(repos: Repos, limits: Limits | None = None) -> int:
+    """Drain the current cycle inside the ``drain.cycle`` root span.
+
+    The span wrapper is thin so the body keeps its shape; per-issue work nests
+    under it via ``_drain_one_issue``'s ``drain.issue`` spans, and the Linear,
+    worktree, and worker spans nest under those — yielding one trace per drain.
+    """
     if limits is None:
         limits = Limits()
+    with telemetry.tracer.start_as_current_span("drain.cycle") as cycle_span:
+        return _run(repos, limits, cycle_span)
+
+
+def _run(repos: Repos, limits: Limits, cycle_span: Span) -> int:
     debug = _debug_enabled()
     cycle_id = linear.current_cycle_id()
+    cycle_span.set_attribute("drain.cycle_id", cycle_id)
     log = runlog.RunLog(cycle_id=cycle_id)
     try:
         plan = linear.pending_issues(cycle_id)
     except DependencyCycleError as exc:
         halt_reason = f"Halt: {exc}"
         log.set_cycle_halt(halt_reason)
+        telemetry.mark_error(cycle_span, "err-dependency-cycle", halt_reason)
         print(halt_reason, file=sys.stderr)
         return 1
 
+    cycle_span.set_attribute("drain.issues_planned", len(plan.order))
+    cycle_span.set_attribute("drain.issues_deferred", len(plan.deferred))
+
     if not plan.order and not plan.deferred:
+        cycle_span.set_attribute("drain.outcome", "nothing-to-do")
         print(f"Cycle {cycle_id} has no Todo/Backlog issues — nothing to do.")
         return 0
 
@@ -135,11 +154,70 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
         )
 
     if not plan.order:
+        cycle_span.set_attribute("drain.outcome", "all-deferred")
         return 0
 
     total = len(plan.order)
     for index, issue in enumerate(plan.order):
-        identifier = issue["identifier"]
+        halt_code = _drain_one_issue(
+            issue,
+            index=index,
+            total=total,
+            repos=repos,
+            limits=limits,
+            log=log,
+            cycle_id=cycle_id,
+            debug=debug,
+        )
+        if halt_code is not None:
+            return halt_code
+
+        # Cycle-wide circuit breaker: every issue may stay under its own
+        # per-issue caps while their sum drains the quota. Check the
+        # running totals (which now include the Done issue just finished)
+        # before spawning the next one; on breach, stop the cycle.
+        cycle_breach = check_cycle(
+            limits,
+            tokens=log.cycle_tokens_cumulative(),
+            cost_usd=log.cycle_cost_usd(),
+            seconds=log.cycle_duration_seconds(),
+        )
+        if cycle_breach is not None:
+            halt_reason = f"Halt: {cycle_breach.describe()}"
+            log.set_cycle_halt(halt_reason)
+            telemetry.mark_error(cycle_span, "err-cycle-breach", halt_reason)
+            print(halt_reason, file=sys.stderr)
+            return 1
+
+    cycle_span.set_attribute("drain.outcome", "drained")
+    return 0
+
+
+def _drain_one_issue(
+    issue: dict,
+    *,
+    index: int,
+    total: int,
+    repos: Repos,
+    limits: Limits,
+    log: runlog.RunLog,
+    cycle_id: str,
+    debug: bool,
+) -> int | None:
+    """Drain a single issue end to end inside a ``drain.issue`` span.
+
+    Returns ``None`` when the issue reached Done (the caller then runs the
+    cycle-wide circuit breaker and proceeds to the next issue), or an exit
+    code when the run must halt: repo-resolution failure, pre-spawn setup
+    failure, a per-issue cap breach, or a session that finished not-Done.
+    Each halt path is also marked on the span with a static ``exception.slug``.
+    """
+    identifier = issue["identifier"]
+    with telemetry.tracer.start_as_current_span("drain.issue") as issue_span:
+        issue_span.set_attribute("issue.identifier", identifier)
+        issue_span.set_attribute("issue.title", issue["title"])
+        issue_span.set_attribute("issue.index", index + 1)
+        issue_span.set_attribute("issue.total", total)
         print(f"drain-cycle: picked {identifier}: {issue['title']}", file=sys.stderr)
 
         started_at = _now_iso()
@@ -163,8 +241,12 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
                 worktree_path=_UNRESOLVED_WORKTREE_DISPLAY,
                 halt_reason=halt_reason,
             )
+            issue_span.set_attribute("issue.final_linear_state", state_name)
+            telemetry.mark_error(issue_span, "err-repo-resolution", halt_reason)
             print(halt_reason, file=sys.stderr)
             return 1
+
+        issue_span.set_attribute("issue.repo", target_repo.name)
 
         try:
             worktree_path = worktree.add(target_repo, identifier)
@@ -199,11 +281,14 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
                 worktree_path=str(planned_path),
                 halt_reason=halt_reason,
             )
+            issue_span.set_attribute("issue.final_linear_state", state_name)
+            telemetry.mark_error(issue_span, "err-setup-failed", halt_reason)
             print(halt_reason, file=sys.stderr)
             return 1
 
         agent_prompt = prompt.build(issue, worktree_path)
         worker_model = model.resolve(issue)
+        issue_span.set_attribute("issue.model", worker_model)
 
         debug_file = log.debug_path(identifier) if debug else None
         if debug_file is not None:
@@ -305,19 +390,26 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
                 halt_reason=halt_reason,
                 **_worker_log_fields(result),
             )
+            issue_span.set_attribute("issue.exit_code", result.exit_code)
+            issue_span.set_attribute("issue.final_linear_state", effective_state)
+            telemetry.mark_error(issue_span, "err-per-issue-breach", halt_reason)
             print(halt_reason, file=sys.stderr)
             return 1
 
         refreshed = linear.get_issue(issue["id"])
         post_spawn_state = refreshed["state"]["name"]
         is_done = refreshed["state"]["type"] == _DONE_STATE_TYPE
+        issue_span.set_attribute("issue.exit_code", result.exit_code)
+        issue_span.set_attribute("issue.is_done", is_done)
 
         if is_done:
+            issue_span.set_attribute("issue.final_linear_state", post_spawn_state)
             remove_error: str | None = None
             try:
                 worktree.remove(target_repo, worktree_path)
             except RuntimeError as exc:
                 remove_error = str(exc)
+                issue_span.set_attribute("worktree.remove_error", remove_error)
                 print(
                     f"drain-cycle: {identifier}: worktree teardown failed: {exc}",
                     file=sys.stderr,
@@ -335,23 +427,7 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
             )
             if remove_error is None:
                 print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
-
-            # Cycle-wide circuit breaker: every issue may stay under its own
-            # per-issue caps while their sum drains the quota. Check the
-            # running totals (which now include this Done issue) before
-            # spawning the next one; on breach, stop the cycle.
-            cycle_breach = check_cycle(
-                limits,
-                tokens=log.cycle_tokens_cumulative(),
-                cost_usd=log.cycle_cost_usd(),
-                seconds=log.cycle_duration_seconds(),
-            )
-            if cycle_breach is not None:
-                halt_reason = f"Halt: {cycle_breach.describe()}"
-                log.set_cycle_halt(halt_reason)
-                print(halt_reason, file=sys.stderr)
-                return 1
-            continue
+            return None
 
         # Not-Done halt: revert to the pre-halt state so a re-run picks
         # this issue back up instead of silently skipping it.
@@ -378,7 +454,7 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
             halt_reason=halt_reason,
             **_worker_log_fields(result),
         )
+        issue_span.set_attribute("issue.final_linear_state", effective_state)
+        telemetry.mark_error(issue_span, "err-issue-not-done", halt_reason)
         print(halt_reason, file=sys.stderr)
         return 1
-
-    return 0

@@ -16,6 +16,8 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
+from . import telemetry
+
 BASE_BRANCH = "main"
 WORKTREE_DIR = ".worktrees"
 
@@ -26,10 +28,14 @@ def add(repo: Path, identifier: str) -> Path:
     Returns the absolute path to the new worktree.
     """
     worktree_path = repo / WORKTREE_DIR / identifier
-    _run_git(
-        ["worktree", "add", "-b", identifier, str(worktree_path), BASE_BRANCH],
-        cwd=repo,
-    )
+    with telemetry.tracer.start_as_current_span("drain.worktree.add") as span:
+        span.set_attribute("worktree.identifier", identifier)
+        span.set_attribute("worktree.repo", repo.name)
+        span.set_attribute("worktree.path", str(worktree_path))
+        _run_git(
+            ["worktree", "add", "-b", identifier, str(worktree_path), BASE_BRANCH],
+            cwd=repo,
+        )
     return worktree_path
 
 
@@ -67,7 +73,10 @@ def link_project_config(
 
 def remove(repo: Path, worktree_path: Path) -> None:
     """Remove a worktree previously created by :func:`add`."""
-    _run_git(["worktree", "remove", str(worktree_path)], cwd=repo)
+    with telemetry.tracer.start_as_current_span("drain.worktree.remove") as span:
+        span.set_attribute("worktree.repo", repo.name)
+        span.set_attribute("worktree.path", str(worktree_path))
+        _run_git(["worktree", "remove", str(worktree_path)], cwd=repo)
 
 
 def _run_git(args: list[str], *, cwd: Path) -> None:
