@@ -1,0 +1,43 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "f02c92d89f05",
+  "session_id": "ac6d7e8e-9409-4e35-9a9d-d03b6807b03d",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-26T07:17:35.660806Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "drain_cycle/orchestrator.py",
+    "tests/test_orchestrator_runlog.py",
+    "tests/test_orchestrator_set_state.py",
+    "tests/test_orchestrator_halt.py",
+    "tests/test_orchestrator_marker.py",
+    "tests/test_orchestrator_multi_repo.py",
+    "tests/test_orchestrator_teardown.py",
+    "tests/test_orchestrator_iteration.py"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-4-6",
+  "turn_id": "290edf87fec3",
+  "checkpoint_transcript_start": 214,
+  "transcript_lines_at_start": 214,
+  "token_usage": {
+    "input_tokens": 56,
+    "cache_creation_tokens": 105039,
+    "cache_read_tokens": 7293086,
+    "output_tokens": 17359,
+    "api_call_count": 54
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-26T07:17:35.641528Z",
+    "agent_lines": 100,
+    "agent_removed": 97,
+    "human_added": 5,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 105,
+    "total_lines_changed": 208,
+    "agent_percentage": 94.71153846153845,
+    "metric_version": 2
+  }
+}
