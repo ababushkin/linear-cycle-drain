@@ -3,7 +3,7 @@
   "checkpoint_id": "f1724ebd5e69",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 0,
+  "checkpoints_count": 1,
   "files_touched": [
     "README.md",
     "docs/design-decisions.md",
@@ -16,13 +16,19 @@
       "transcript": "/f1/724ebd5e69/0/full.jsonl",
       "content_hash": "/f1/724ebd5e69/0/content_hash.txt",
       "prompt": "/f1/724ebd5e69/0/prompt.txt"
+    },
+    {
+      "metadata": "/f1/724ebd5e69/1/metadata.json",
+      "transcript": "/f1/724ebd5e69/1/full.jsonl",
+      "content_hash": "/f1/724ebd5e69/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 4305,
-    "cache_creation_tokens": 74703,
-    "cache_read_tokens": 1143978,
-    "output_tokens": 6424,
-    "api_call_count": 18
+    "input_tokens": 4472,
+    "cache_creation_tokens": 321840,
+    "cache_read_tokens": 14094716,
+    "output_tokens": 64309,
+    "api_call_count": 135
   }
 }
