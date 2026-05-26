@@ -22,8 +22,8 @@ _RESOLVED_STATE_TYPES = {"completed", "canceled"}
 @dataclass(frozen=True)
 class ExecutionPlan:
     """Result of ``_plan``: runnable issues in topo order + deferred issues."""
-    order: list  # list[dict] — issues to spawn, in execution order
-    deferred: list  # list[dict] — each {"issue", "blocker_identifier", "blocker_state_type"}
+    order: list[dict[str, Any]]   # issues to spawn, in execution order
+    deferred: list[dict[str, Any]]  # each {"issue", "blocker_identifier", "blocker_state_type"}
 
 
 class DependencyCycleError(RuntimeError):

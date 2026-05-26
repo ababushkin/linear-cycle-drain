@@ -115,7 +115,7 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
     try:
         plan = linear.pending_issues(cycle_id)
     except DependencyCycleError as exc:
-        halt_reason = f"Halt: dependency cycle — {exc}"
+        halt_reason = f"Halt: {exc}"
         log.set_cycle_halt(halt_reason)
         print(halt_reason, file=sys.stderr)
         return 1
