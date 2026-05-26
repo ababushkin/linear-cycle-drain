@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "76f3a180fda7",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "README.md",
+    "docs/design-decisions.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/76/f3a180fda7/0/metadata.json",
+      "transcript": "/76/f3a180fda7/0/full.jsonl",
+      "content_hash": "/76/f3a180fda7/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 45,
+    "cache_creation_tokens": 11959,
+    "cache_read_tokens": 754701,
+    "output_tokens": 2581,
+    "api_call_count": 9
+  }
+}
