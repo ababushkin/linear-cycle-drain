@@ -168,16 +168,17 @@ def _plan(issues: list[dict[str, Any]]) -> ExecutionPlan:
     return ExecutionPlan(order=order, deferred=deferred)
 
 
-def pending_issues(cycle_id: str) -> list[dict[str, Any]]:
-    """Return every Todo/Backlog issue in the cycle, sorted for execution.
+def pending_issues(cycle_id: str) -> ExecutionPlan:
+    """Return an ``ExecutionPlan`` for every Todo/Backlog issue in the cycle.
 
     No pagination: personal cycles fit comfortably in one page. If a cycle
     ever exceeds 100 pending issues, that's a planning problem, not a tool
     problem (see ``PRODUCT_RULES`` Rule A5 — focus is the multiplier).
 
-    ``labels`` is flattened from the GraphQL ``{nodes: [{name}]}`` shape to
-    a plain ``list[str]`` so downstream code (``repos.Repos.resolve``)
-    doesn't need to know the wire shape.
+    Post-processing flattens two wire-shape fields:
+    - ``labels { nodes { name } }`` → ``labels: list[str]``
+    - ``inverseRelations`` filtered to ``type == "blocks"``
+      → ``blockers: list[{id, identifier, state_type}]``; raw key removed.
     """
     data = _post(
         """
@@ -194,10 +195,10 @@ def pending_issues(cycle_id: str) -> list[dict[str, Any]]:
               identifier
               title
               description
-              priority
               sortOrder
               state { type name }
               labels { nodes { name } }
+              inverseRelations { nodes { type issue { id identifier state { type } } } }
             }
           }
         }
@@ -207,7 +208,17 @@ def pending_issues(cycle_id: str) -> list[dict[str, Any]]:
     issues = data["issues"]["nodes"]
     for issue in issues:
         issue["labels"] = [node["name"] for node in issue["labels"]["nodes"]]
-    return _sort_pending_issues(issues)
+        issue["blockers"] = [
+            {
+                "id": node["issue"]["id"],
+                "identifier": node["issue"]["identifier"],
+                "state_type": node["issue"]["state"]["type"],
+            }
+            for node in issue["inverseRelations"]["nodes"]
+            if node["type"] == "blocks"
+        ]
+        del issue["inverseRelations"]
+    return _plan(issues)
 
 
 def get_issue(issue_id: str) -> dict[str, Any]:
