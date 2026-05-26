@@ -1,0 +1,8 @@
+Use the otel-instrumentation skill to instrument my application to send traces to Honeycomb using OpenTelemetry.
+My Honeycomb API key is: REDACTED
+
+Set up auto-instrumentation and add custom spans for the key operations in my codebase. Use the query-patterns skill to verify data is flowing correctly.
+
+---
+
+i've refreshed the token
