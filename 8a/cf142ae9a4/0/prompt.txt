@@ -1,0 +1,105 @@
+/agent-skills:incremental-implementation Work on Linear issue ABA-294:
+
+<issue identifier="ABA-294">
+<title>Order cycle drain by manual sortOrder only; respect blocks/blocked-by</title>
+<description>
+## Execution
+
+**Execute via a sub-agent.** The drain worker delegates this issue's implementation to a sub-agent (not the main session); the pre-Done `/code-review-and-quality` gate also runs in a sub-agent, per workspace convention.
+
+**Labels.**
+
+* **skill:** `incremental-implementation` (no matching Linear label exists yet — recorded here) — build the checklist slice by slice, applying `test-driven-development` within each slice (write the failing test first), then the `code-review-and-quality` gate via sub-agent before Done.
+* **model:** `sonnet` — rubric (1–5, 5 = hardest/riskiest): algorithmic complexity 4 (Kahn topo-sort + cascade + cycle-as-leftovers), scope/effort 3 (\~150 LOC, 2 source + \~8 test files), hallucination risk 2 (Linear GraphQL shape verified in this spec; no novel APIs), blast radius/criticality 3 (core ordering path, but reversible, single-user), spec clarity 1 and verifiability 1 (step-by-step algorithm, enumerated tests, real-data dry-run gate). The two high axes are offset by the exhaustive spec and strong test/dry-run gating → mid-tier suffices. Escalate to `opus` only if the cascade classification proves fiddly across more than \~2 red→green iterations.
+* **review: none** (no high-review label) — review effort is binary (high or none). This change is reversible, single-user, and strongly gated: the full TDD suite plus a real-data dry run that reproduces the exact cycle-3 ordering (asserting every blocker precedes what it blocks, <issue id="20943999-2ee5-4a5b-a94a-b3cded031011">ABA-274</issue> before <issue id="35d48cd5-804e-4045-9f0f-d467be525963">ABA-275</issue>…280, <issue id="f6534b45-8158-4b9e-92d5-ba287c5a0a24">ABA-291</issue> after its blockers, 0 deferred) is the review surface and supplies the evidence. The operator can glance at that dry-run output, but high-effort line-by-line review isn't warranted.
+
+## Problem
+
+drain-cycle orders the issues it executes by `(priority, sortOrder)` (Linear priority first, manual drag-order only as a tiebreak) and **ignores blocks/blocked-by entirely** (`drain_cycle/linear.py` `_sort_pending_issues`). The operator maps execution via the manual drag-order *and* the blocks graph, so today is wrong on two counts:
+
+1. Priority overrides the manual order — an issue dragged to the top is still picked after every higher-priority issue.
+2. A blocked issue can run before its blocker, wasting a worker on work that can't succeed.
+
+Measured on cycle 3 (23 pending issues, 27 intra-cycle blocks edges): <issue id="20943999-2ee5-4a5b-a94a-b3cded031011">ABA-274</issue> **runs last (position 23)** though it blocks six issues (<issue id="35d48cd5-804e-4045-9f0f-d467be525963">ABA-275</issue>…280) that all run before it; <issue id="f6534b45-8158-4b9e-92d5-ba287c5a0a24">ABA-291</issue> **runs first** though it's blocked by <issue id="1980db92-316c-4d2e-817b-fa5b4669349d">ABA-265</issue> and <issue id="00f1876f-6e44-4b05-a65c-07455865d481">ABA-266</issue>. A blocks-aware, manual-order drain corrects both (<issue id="20943999-2ee5-4a5b-a94a-b3cded031011">ABA-274</issue> → \~17, before all six; <issue id="f6534b45-8158-4b9e-92d5-ba287c5a0a24">ABA-291</issue> → \~6, after both blockers).
+
+## Decisions
+
+1. Order purely by manual `sortOrder` ascending; **drop** `priority` **from ordering** (remove the `(priority, sortOrder)` key and the `_NO_PRIORITY_SORT_KEY` remap).
+2. **Respect blocks:** topological order over the runnable set, `(sortOrder, id)` as the tiebreak among ready issues — so manual order is honored as far as dependencies allow.
+3. **External unresolved blocker → defer.** If a pending issue is blocked by an issue not in this drain's pending set (current cycle Todo/Backlog) and that blocker is not `completed`/`canceled` — this includes an issue already In Progress in the cycle, which this drain won't complete — defer the blocked issue: leave it Todo, don't spawn, log to stderr. **Deferral cascades:** if X is deferred and X blocks Y within the drain, Y defers too. Deferrals are **not** run-logged — a deferred issue was never attempted, so recording it would corrupt `grade`'s `done/attempted` completion signal.
+4. **Blocks cycle → halt.** If the blocks graph among pending issues contains a cycle (self-loop included), set `cycle_halt_reason`, run nothing, exit 1, name the issues.
+
+## How — data
+
+In `linear.pending_issues` GraphQL: **remove** `priority`; **keep** `sortOrder`; **add** `inverseRelations { nodes { type issue { id identifier state { type } } } }`. For issue Y, `inverseRelations` filtered to `type == "blocks"` yields Y's blockers (the `issue` field) with their state — sufficient for both intra-set edges and external-blocker detection; `relations` (forward) is not needed. Filter out non-blocking types (`related`, `duplicate`). In post-processing (beside the existing `labels` flatten), attach `issue["blockers"] = [{id, identifier, state_type} …]` and drop the raw `inverseRelations` key — wire-shape stays local to `pending_issues`, like `labels`.
+
+## How — algorithm
+
+New pure function `_plan(issues) -> ExecutionPlan` replaces `_sort_pending_issues` (stays the directly-tested unit; reads `issue.get("blockers", [])` so stubs need no new field, mirroring `model.resolve`'s `issue.get("labels", [])`). Add `@dataclass(frozen=True) ExecutionPlan(order, deferred)` and `class DependencyCycleError(RuntimeError)` (carries the involved identifiers) in `linear.py`, imported by the orchestrator like `RepoResolutionError`. A **single Kahn pass** does ordering, cascade, and cycle detection:
+
+1. `P` = pending issue ids. Build a **de-duped** intra-P edge set (blocker→blocked) from each issue's `blockers` where `blocker.id ∈ P`, plus in-degree counts (set-based so duplicate relations and self-loops can't inflate in-degree).
+2. Repeatedly take the ready node (in-degree 0) with the smallest `(sortOrder, id)`. Classify it: **deferred** if it has an external unresolved blocker (`blocker.id ∉ P` and `blocker.state_type` neither `completed` nor `canceled`) **or** any intra-P blocker was deferred (cascade falls out for free, since Kahn takes a node only after all its intra-P blockers); else **runnable** → append to `order`. Decrement children either way.
+3. Any node never taken (in-degree never hit 0) is in a cycle → raise `DependencyCycleError`. Deferred nodes are still taken, so a cycle is never masked.
+
+The deferral predicate is an **exclusion** — defer unless the blocker is `completed`/`canceled` — so `started`/`unstarted`/`backlog`/`triage` external blockers all defer. Ready set ordered by `(sortOrder, id)`; at ≤15 nodes a small heap or a re-sorted list is equally fine.
+
+## How — orchestrator
+
+`pending_issues` now returns `ExecutionPlan`. In `orchestrator.run` (the `RunLog` is built before the fetch): wrap the `pending_issues` call in `try/except DependencyCycleError` → `log.set_cycle_halt(reason)`, print a `Halt:` line, `return 1`, run nothing. Before the loop, print one stderr line per `plan.deferred` ("drain-cycle: deferred ABA-NNN — blocked by ABA-MMM (In Progress)") and skip it (no state move, no spawn, no worktree, no run-log entry). Loop over `plan.order`; `total = len(plan.order)`. If `plan.order` is empty but `plan.deferred` is not, print the stderr lines and `return 0` (expected, nothing halted). `cli.py` should need no change — confirm the exception doesn't escape `run`.
+
+## Behavior summary
+
+| Situation | Result |
+| -- | -- |
+| No blocks | pure `sortOrder` ascending |
+| A blocks B, B has lower sortOrder | A runs before B |
+| Blocker Done/Cancelled | edge ignored, blocked issue runs normally |
+| Blocker open & not in drain (incl. In-Progress in cycle) | blocked issue deferred (cascades) |
+| Blocks cycle / self-loop among pending issues | halt, exit 1, run nothing |
+
+## Files
+
+* `drain_cycle/linear.py` — remove `_NO_PRIORITY_SORT_KEY` + `_sort_pending_issues`; add `ExecutionPlan`, `DependencyCycleError`, `_plan`; rewrite `pending_issues` projection + post-processing; return `ExecutionPlan`.
+* `drain_cycle/orchestrator.py` — catch `DependencyCycleError` (cycle-halt, exit 1); iterate `plan.order`; stderr-log + skip `plan.deferred`; all-deferred → 0.
+* `README.md:92` — "in priority order" → "in manual (drag) order, respecting blocks/blocked-by"; add a line on deferral + cycle-halt behavior.
+* `docs/design-decisions.md` — add a §12 entry "Execution order: manual drag-order only, blocks-aware" (decision, In-Progress-blocker reading, the `pending_issues` return-type change `list[dict]`→`ExecutionPlan`, and rejected alternatives below). Incidental: fix the already-stale "Ten decisions" count in the header (doc runs to §11; this makes §12).
+
+## Steps (checklist)
+
+- [ ] `_plan` + `ExecutionPlan` + `DependencyCycleError` + rewrite `tests/test_linear_sort.py` (TDD: manual-order; blocker-before-blocked vs reversed sortOrder; `(sortOrder,id)` determinism; external-blocker deferred w/ reason; external-Done ignored; 3-deep cascade; 2-node cycle + self-loop raise; In-Progress-in-cycle deferred; duplicate edges don't crash) → verify: new tests green
+- [ ] `pending_issues` query/flatten rewrite → returns `ExecutionPlan`; update `tests/test_linear_pending_issues.py` (drop `priority`, add `inverseRelations` stub, assert `blockers` flattened + raw key removed) → verify: test green
+- [ ] orchestrator: cycle-halt, iterate `plan.order`, stderr-log + skip `plan.deferred`, all-deferred → 0 → verify: orchestrator tests green
+- [ ] `tests/test_orchestrator_iteration.py` blocks-disagreement (lower-sortOrder issue blocked → blocker first) + deferral case (absent from marker output; stderr line via capsys); new `tests/test_orchestrator_cycle_halt.py` (raise → exit 1 + `cycle_halt_reason`, no worktrees, no `set_state`) → verify: green
+- [ ] mechanical sweep — `tests/test_orchestrator_{runlog,set_state,halt,marker,cycle_limit,multi_repo}.py`: drop `priority` from each local `_issue` helper, swap `linear._sort_pending_issues(...)` → `linear._plan(...)` in each `fake_pending_issues` stub. Strictly mechanical, no behavioural edits → verify: full suite green
+- [ ] docs: `README.md:92` + `docs/design-decisions.md` §12 (+ fix stale count) → verify: reads correctly
+- [ ] full `uv run pytest` green; **read-only** dry run (throwaway script, **not committed**) loading `.env` + calling `pending_issues(current_cycle_id())` against cycle 3 — must place every blocker before what it blocks, put <issue id="20943999-2ee5-4a5b-a94a-b3cded031011">ABA-274</issue> before <issue id="35d48cd5-804e-4045-9f0f-d467be525963">ABA-275</issue>…280 and <issue id="f6534b45-8158-4b9e-92d5-ba287c5a0a24">ABA-291</issue> after <issue id="1980db92-316c-4d2e-817b-fa5b4669349d">ABA-265</issue>/266, report 0 deferred, not raise
+
+## Acceptance
+
+* `_plan` unit suite covers: manual-order, blocker-before-blocked, cascade, cycle/self-loop halt, external-Done ignored, In-Progress-in-cycle deferred.
+* Orchestrator: cycle → exit 1 + `cycle_halt_reason`, no worktrees/state moves; deferrals on stderr, left Todo, not spawned.
+* `priority` no longer affects ordering anywhere; full `pytest` green.
+* README + design-decisions §12 updated.
+
+## Rejected alternatives
+
+Keep priority in the sort key (operator wants one predictable knob — the drag-order); ignore blocks (runs blocked work that can't succeed); best-effort run instead of defer/halt (silently violates the dependency the operator relies on); record deferrals in the run log (a deferred issue was never attempted — counting it corrupts `done/attempted`).
+
+## Out of scope
+
+Durable on-disk / `grade` visibility of deferrals (stderr only for v1 — a real grade-semantics question deserving its own issue); `status`-command surfacing of deferrals.
+</description>
+<team name="Personal"/>
+<label>repo › drain-cycle</label>
+<label>model › sonnet</label>
+<project name="Autonomous cycle drain - eliminate manual shepherding">A CLI that drains a Linear cycle by spawning fresh Claude Code sessions per issue — frees operator time for scoping and validation.</project>
+<issue-relations>
+<related>
+<issue-ref identifier="ABA-274" title="Write references/task-sizing.md — the 5-axis routing rubric"/>
+<issue-ref identifier="ABA-275" title="Thread task-sizing into planning-and-task-breakdown Step 5"/>
+<issue-ref identifier="ABA-291" title="Adapter: surface node `delegates_to` as an on-pickup instruction on the emitted issue"/>
+<issue-ref identifier="ABA-265" title="Scaffold the pack: repo, manifest, marketplace entry, README"/>
+<issue-ref identifier="ABA-266" title="Author the tracker module in the new pack; lift the code-review gate out; fix cross-pack refs"/>
+</related>
+</issue-relations>
+</issue>
