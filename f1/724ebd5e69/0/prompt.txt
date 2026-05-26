@@ -1,0 +1,84 @@
+Work on Linear issue ABA-296:
+
+<issue identifier="ABA-296">
+<title>fix: resolve Linear label groups (repo/model) so grouped labels stop halting the drain</title>
+<description>
+## Problem
+
+`drain-cycle` halts on the first issue of the current cycle:
+
+```
+Halt: ABA-265 (final state: Todo) at <unresolved> — no repo: label on issue
+```
+
+<issue id="1980db92-316c-4d2e-817b-fa5b4669349d">ABA-265</issue> *has* a repo label, but as a Linear **label group** child, not a flat `repo:<name>` label. The whole workspace now uses label groups (`repo`, `model`, `wave`, …), so this blocks **every** drain run, not just one issue.
+
+## Root cause (evidence)
+
+Live API query for <issue id="1980db92-316c-4d2e-817b-fa5b4669349d">ABA-265</issue> returns grouped labels:
+
+| leaf `name` | `parent.name` | `parent.isGroup` |
+| -- | -- | -- |
+| `agent-skills-workflow` | `repo` | `true` |
+| `sonnet` | `model` | `true` |
+| `1-build-parallel` | `wave` | `true` |
+
+`drain_cycle/linear.py:200` requests only `labels { nodes { name } }`, and the flatten at `linear.py:210` yields `["agent-skills-workflow", …]`. `repos.resolve` (`repos.py:73-79`) filters for a `repo:` prefix, finds none, and raises `RepoResolutionError("no repo: label on issue")`. The same gap silently degrades `model.resolve` (`model.py:35-45`): it never sees `model:sonnet` and falls back to `DEFAULT_MODEL` instead of honouring the per-issue choice (lenient by design, so no halt — `docs/design-decisions.md §7`).
+
+## Fix (confined to `drain_cycle/linear.py`)
+
+Render a grouped label as `"<group>:<leaf>"` in the wire→internal projection that already lives in `pending_issues`, so it is indistinguishable downstream from the existing flat-prefix convention. `repos.py` and `model.py` stay untouched; literal `repo:`/`model:` labels remain backward-compatible.
+
+1. Extend the query selection (`linear.py:200`): `labels { nodes { name parent { name } } }`
+2. Add a helper and use it in place of the comprehension at `linear.py:210`:
+
+```python
+def _label_name(node: dict[str, Any]) -> str:
+    """Render a label node in its prefix form.
+
+    A label in a Linear label *group* arrives as a leaf ``name`` with a
+    ``parent`` group label; downstream resolvers match on a ``<group>:``
+    prefix (``repo:``, ``model:``), so a grouped label renders as
+    ``"<group>:<name>"``. An ungrouped label keeps its bare name, which
+    already carries any literal prefix typed into the label name.
+    """
+    parent = node.get("parent")
+    if parent:
+        return f"{parent['name']}:{node['name']}"
+    return node["name"]
+```
+
+```python
+issue["labels"] = [_label_name(node) for node in issue["labels"]["nodes"]]
+```
+
+Result for <issue id="1980db92-316c-4d2e-817b-fa5b4669349d">ABA-265</issue>: `["repo:agent-skills-workflow", "model:sonnet", "wave:1-build-parallel"]` → resolves to `/Users/anton/src/agent-skills-workflow` and `claude-sonnet-4-6`; `wave:` is harmlessly ignored. `repos.yml` already maps every repo child, so the parse fix is sufficient end-to-end (no second halt). Group labels are not assignable to issues in Linear, so no group node appears in `labels.nodes`.
+
+## Tests (`tests/test_linear_pending_issues.py`)
+
+* `..._projection_requests_label_parent` — `"parent"` appears in the captured query (mirrors the existing `..._requests_inverse_relations` test).
+* `..._renders_grouped_labels_with_group_prefix` — label nodes with `parent: {"name": "repo"}` / `{"name": "model"}` flatten to `["repo:agent-skills-workflow", "model:sonnet"]`.
+* `..._keeps_ungrouped_label_name_verbatim` — `parent: None` and a literal `"repo:drain-cycle"` name round-trip unchanged (backward compatibility).
+
+Extend the `_node` helper (line 22) so a label entry may be a `str` (ungrouped) or a `(name, group)` pair, leaving existing string call sites working. The `repos.py`/`model.py` suites stay green unchanged.
+
+## Docs
+
+* `docs/design-decisions.md §5` — addendum: grouped labels are supported; a child of a `repo` group resolves identically to flat `repo:<name>` (same for the `model` group, §7). Note `parent { name }` is now in the pending query and the `"<group>:<leaf>"` rendering rule.
+* `README.md §1` — labels may be flat (`repo:<name>`) **or** a `repo` group whose children are named after `repos.yml` keys.
+
+## Verification
+
+* `uv run pytest tests/test_linear_pending_issues.py tests/test_repos.py tests/test_model.py -q`
+* `uv run pytest -q` (full suite green)
+* Re-run `drain-cycle`: it should now pick <issue id="1980db92-316c-4d2e-817b-fa5b4669349d">ABA-265</issue> and proceed past resolution.
+
+## Note on execution
+
+drain-cycle cannot pick up this issue itself — it can't resolve its own `repo:drain-cycle` label until this is fixed. Implement in a manual `claude` session, then commit (`fix:` prefix) and push to main per `AGENTS.md`.
+</description>
+<team name="Personal"/>
+<label>repo › drain-cycle</label>
+<project name="Autonomous cycle drain - eliminate manual shepherding">A CLI that drains a Linear cycle by spawning fresh Claude Code sessions per issue — frees operator time for scoping and validation.</project>
+<issue-relations><related><issue-ref identifier="ABA-265" title="Scaffold the pack: repo, manifest, marketplace entry, README"/></related></issue-relations>
+</issue>
