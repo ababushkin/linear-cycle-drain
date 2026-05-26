@@ -307,6 +307,137 @@ def test_orchestrator_omits_debug_file_when_capture_off(
     assert "--debug-file" not in argv
 
 
+def test_orchestrator_respects_blocks_over_sort_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An issue with a lower sortOrder that is blocked by one with a higher
+    sortOrder must run *after* its blocker — not before it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    # ABA-EARLY has sortOrder 1.0 (lower = "earlier" in pure sort order),
+    # but it is blocked by ABA-LATE (sortOrder 2.0). The dependency forces
+    # ABA-LATE to run first.
+    early = {
+        "id": "id-ABA-EARLY",
+        "identifier": "ABA-EARLY",
+        "title": "Early",
+        "description": "",
+        "sortOrder": 1.0,
+        "state": {"type": "unstarted", "name": "Todo"},
+        "labels": ["repo:test-repo"],
+        "blockers": [{"id": "id-ABA-LATE", "identifier": "ABA-LATE", "state_type": "unstarted"}],
+    }
+    late = {
+        "id": "id-ABA-LATE",
+        "identifier": "ABA-LATE",
+        "title": "Late",
+        "description": "",
+        "sortOrder": 2.0,
+        "state": {"type": "unstarted", "name": "Todo"},
+        "labels": ["repo:test-repo"],
+        "blockers": [],
+    }
+    raw_issues = [early, late]
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    done_marker = tmp_path / "done-identifiers.txt"
+
+    def fake_pending_issues(cycle_id: str):
+        completed = _completed_identifiers(done_marker)
+        return linear._plan([i for i in raw_issues if i["identifier"] not in completed])
+
+    def fake_get_issue(issue_id: str) -> dict:
+        issue = issues_by_id[issue_id]
+        if issue["identifier"] in _completed_identifiers(done_marker):
+            return {**issue, "state": {"type": "completed", "name": "Done"}}
+        return issue
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle")
+    monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+    monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
+
+    fake_claude = _write_fake_claude_script(tmp_path, done_marker)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
+
+    assert exit_code == 0
+    # Blocker must appear before blocked in the execution log.
+    order = done_marker.read_text().splitlines()
+    assert order == ["ABA-LATE", "ABA-EARLY"]
+
+
+def test_orchestrator_defers_blocked_issue_and_logs_to_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An issue blocked by an external unresolved issue is deferred: it is
+    absent from the execution log and a message appears on stderr. The
+    unblocked sibling runs normally."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    # ABA-FREE has no blockers and runs. ABA-STUCK is blocked by an external
+    # issue (id-EXT-1) that is "in_progress" — not completed/canceled.
+    free_issue = {
+        "id": "id-ABA-FREE",
+        "identifier": "ABA-FREE",
+        "title": "Free",
+        "description": "",
+        "sortOrder": 1.0,
+        "state": {"type": "unstarted", "name": "Todo"},
+        "labels": ["repo:test-repo"],
+        "blockers": [],
+    }
+    stuck_issue = {
+        "id": "id-ABA-STUCK",
+        "identifier": "ABA-STUCK",
+        "title": "Stuck",
+        "description": "",
+        "sortOrder": 2.0,
+        "state": {"type": "unstarted", "name": "Todo"},
+        "labels": ["repo:test-repo"],
+        "blockers": [{"id": "id-EXT-1", "identifier": "EXT-1", "state_type": "started"}],
+    }
+    raw_issues = [free_issue, stuck_issue]
+    issues_by_id = {i["id"]: i for i in raw_issues}
+    done_marker = tmp_path / "done-identifiers.txt"
+
+    def fake_pending_issues(cycle_id: str):
+        completed = _completed_identifiers(done_marker)
+        return linear._plan([i for i in raw_issues if i["identifier"] not in completed])
+
+    def fake_get_issue(issue_id: str) -> dict:
+        issue = issues_by_id[issue_id]
+        if issue["identifier"] in _completed_identifiers(done_marker):
+            return {**issue, "state": {"type": "completed", "name": "Done"}}
+        return issue
+
+    monkeypatch.setattr(linear, "current_cycle_id", lambda: "stub-cycle")
+    monkeypatch.setattr(linear, "pending_issues", fake_pending_issues)
+    monkeypatch.setattr(linear, "get_issue", fake_get_issue)
+    monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
+
+    fake_claude = _write_fake_claude_script(tmp_path, done_marker)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
+
+    assert exit_code == 0
+    # Only the free issue ran.
+    assert done_marker.read_text().splitlines() == ["ABA-FREE"]
+    # Deferred issue appears on stderr.
+    stderr = capsys.readouterr().err
+    assert "ABA-STUCK" in stderr
+    assert "EXT-1" in stderr
+
+
 def _model_arg(argv_file: Path) -> str:
     """Return the token following ``--model`` in a captured argv file."""
     argv = argv_file.read_text().splitlines()
