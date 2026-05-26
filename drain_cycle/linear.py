@@ -8,6 +8,7 @@ Single-team scope: hardcoded to the ``Personal`` team per README §1.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -15,11 +16,21 @@ import httpx
 _ENDPOINT = "https://api.linear.app/graphql"
 _TEAM_NAME = "Personal"
 _PENDING_STATE_TYPES = ["backlog", "unstarted"]
-_NO_PRIORITY_SORT_KEY = 5
-"""Sort key for Linear's ``priority == 0`` (No priority). Linear encodes
-1..4 as Urgent..Low; ``0`` means "unset" and must sort *after* Low, not
-before Urgent. Picking 5 keeps the 1..4 ordering intact and pushes 0
-to the end."""
+_RESOLVED_STATE_TYPES = {"completed", "canceled"}
+
+
+@dataclass(frozen=True)
+class ExecutionPlan:
+    """Result of ``_plan``: runnable issues in topo order + deferred issues."""
+    order: list  # list[dict] — issues to spawn, in execution order
+    deferred: list  # list[dict] — each {"issue", "blocker_identifier", "blocker_state_type"}
+
+
+class DependencyCycleError(RuntimeError):
+    """Raised when the blocks graph among pending issues contains a cycle."""
+    def __init__(self, identifiers: list[str]) -> None:
+        self.identifiers = list(identifiers)
+        super().__init__(f"Dependency cycle among: {', '.join(identifiers)}")
 
 
 def _post(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -63,17 +74,98 @@ def current_cycle_id() -> str:
     return cycle["id"]
 
 
-def _sort_pending_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sort by Linear priority (Urgent→Low→No-priority), tiebroken by ``sortOrder``.
+def _plan(issues: list[dict[str, Any]]) -> ExecutionPlan:
+    """Topological sort over ``issues`` respecting blocks/blocked-by.
 
-    Linear encodes priority as 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low.
-    The quirk worth pinning down in a test: ``0`` must sort *after* ``4``, not
-    before ``1``. We remap 0→``_NO_PRIORITY_SORT_KEY`` and leave 1..4 in place.
+    Returns an ``ExecutionPlan`` with ``order`` (runnable, topo-sorted by
+    ``(sortOrder, id)`` tiebreak) and ``deferred`` (issues skipped because
+    an external unresolved blocker exists, or because a blocking issue in
+    the drain was itself deferred — cascade).
+
+    Raises ``DependencyCycleError`` when the intra-set blocks graph contains
+    a cycle (self-loops included).
     """
-    def key(issue: dict[str, Any]) -> tuple[int, float]:
-        p = issue["priority"]
-        return (p if p else _NO_PRIORITY_SORT_KEY, issue["sortOrder"])
-    return sorted(issues, key=key)
+    P: set[str] = {i["id"] for i in issues}
+    by_id: dict[str, dict[str, Any]] = {i["id"]: i for i in issues}
+
+    # Build de-duped intra-P edges: blocker_id → set of blocked_ids
+    children: dict[str, set[str]] = {i["id"]: set() for i in issues}
+    # Per-issue unique set of intra-P blocker ids (for cascade check + in-degree)
+    intra_blockers: dict[str, set[str]] = {i["id"]: set() for i in issues}
+    indegree: dict[str, int] = {i["id"]: 0 for i in issues}
+
+    for issue in issues:
+        for blocker in issue.get("blockers", []):
+            bid = blocker["id"]
+            if bid in P:
+                if bid not in intra_blockers[issue["id"]]:
+                    intra_blockers[issue["id"]].add(bid)
+                    indegree[issue["id"]] += 1
+                    children[bid].add(issue["id"])
+
+    # Kahn's algorithm: ready = in-degree-0 issues, sorted by (sortOrder, id)
+    ready: list[dict[str, Any]] = sorted(
+        [i for i in issues if indegree[i["id"]] == 0],
+        key=lambda i: (i["sortOrder"], i["id"]),
+    )
+
+    order: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    deferred_ids: set[str] = set()
+
+    while ready:
+        issue = ready.pop(0)
+        iid = issue["id"]
+
+        # Cascade: any intra-P blocker already deferred → defer this too
+        cascade_blocker = next(
+            (by_id[bid] for bid in intra_blockers[iid] if bid in deferred_ids),
+            None,
+        )
+        if cascade_blocker is not None:
+            deferred.append({
+                "issue": issue,
+                "blocker_identifier": cascade_blocker["identifier"],
+                "blocker_state_type": cascade_blocker["state"]["type"],
+            })
+            deferred_ids.add(iid)
+        else:
+            # External unresolved blocker → defer
+            ext_blocker = next(
+                (
+                    b for b in issue.get("blockers", [])
+                    if b["id"] not in P and b["state_type"] not in _RESOLVED_STATE_TYPES
+                ),
+                None,
+            )
+            if ext_blocker is not None:
+                deferred.append({
+                    "issue": issue,
+                    "blocker_identifier": ext_blocker["identifier"],
+                    "blocker_state_type": ext_blocker["state_type"],
+                })
+                deferred_ids.add(iid)
+            else:
+                order.append(issue)
+
+        # Decrement children regardless (deferred nodes still unblock their children
+        # in the graph so cycle detection remains accurate)
+        for child_id in children[iid]:
+            indegree[child_id] -= 1
+            if indegree[child_id] == 0:
+                child = by_id[child_id]
+                # Insert maintaining (sortOrder, id) order
+                idx = 0
+                key = (child["sortOrder"], child["id"])
+                while idx < len(ready) and (ready[idx]["sortOrder"], ready[idx]["id"]) <= key:
+                    idx += 1
+                ready.insert(idx, child)
+
+    cycle_nodes = [i for i in issues if indegree[i["id"]] > 0]
+    if cycle_nodes:
+        raise DependencyCycleError([i["identifier"] for i in cycle_nodes])
+
+    return ExecutionPlan(order=order, deferred=deferred)
 
 
 def pending_issues(cycle_id: str) -> list[dict[str, Any]]:
