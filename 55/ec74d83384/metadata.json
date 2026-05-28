@@ -3,14 +3,8 @@
   "checkpoint_id": "55ec74d83384",
   "strategy": "manual-commit",
   "branch": "feat-orchestrator-resume-wiring",
-  "checkpoints_count": 3,
-  "files_touched": [
-    "README.md",
-    "docs/design-decisions.md",
-    "docs/limits.example.yml",
-    "drain_cycle/orchestrator.py",
-    "tests/test_orchestrator_resume.py"
-  ],
+  "checkpoints_count": 2,
+  "files_touched": null,
   "sessions": [
     {
       "metadata": "/55/ec74d83384/0/metadata.json",
@@ -26,11 +20,11 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 18220,
-    "cache_creation_tokens": 979790,
-    "cache_read_tokens": 23137931,
-    "output_tokens": 184042,
-    "api_call_count": 173
+    "input_tokens": 18286,
+    "cache_creation_tokens": 1115260,
+    "cache_read_tokens": 28034851,
+    "output_tokens": 207994,
+    "api_call_count": 224
   },
   "combined_attribution": {
     "calculated_at": "2026-05-28T04:39:50.867362Z",
