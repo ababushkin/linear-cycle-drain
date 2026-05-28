@@ -77,18 +77,18 @@ def test_load_secrets_home_env_wins_over_repo_env(
     assert os.environ[_SECRET] == "from-home"
 
 
-def _stub_no_op_orchestrator(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
-    called: list[bool] = []
+def _stub_no_op_orchestrator(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    calls: list[dict] = []
 
-    def fake_run(loaded_repos, loaded_limits) -> int:
-        called.append(True)
+    def fake_run(loaded_repos, loaded_limits, *, watch: bool = False) -> int:
+        calls.append({"watch": watch})
         return 0
 
     monkeypatch.setattr(orchestrator, "run", fake_run)
     monkeypatch.setattr(cli, "load_dotenv", lambda *_a, **_kw: False)
     monkeypatch.setattr(repos, "load", lambda *_a, **_kw: repos.Repos(mapping={}))
     monkeypatch.setattr(limits, "load", lambda *_a, **_kw: limits.Limits())
-    return called
+    return calls
 
 
 def _stub_no_op_grade(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
@@ -104,14 +104,14 @@ def _stub_no_op_grade(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
 
 
 def test_no_args_dispatches_to_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
-    called = _stub_no_op_orchestrator(monkeypatch)
+    calls = _stub_no_op_orchestrator(monkeypatch)
     monkeypatch.setattr("sys.argv", ["drain-cycle"])
 
     with pytest.raises(SystemExit) as exc:
         cli.main()
 
     assert exc.value.code == 0
-    assert called == [True]
+    assert calls == [{"watch": False}]
 
 
 def test_grade_subcommand_dispatches_to_grade_run(
@@ -264,3 +264,54 @@ def test_zero_arg_invocation_eagerly_validates_limits_yml(
     captured = capsys.readouterr()
     assert "limits.yml" in captured.err
     assert captured.out == ""
+
+
+@pytest.mark.parametrize("flag", ["--watch", "-w"])
+def test_watch_flag_passes_watch_true_to_orchestrator(
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str,
+) -> None:
+    """``--watch`` and ``-w`` both pass ``watch=True`` to ``orchestrator.run``."""
+    calls = _stub_no_op_orchestrator(monkeypatch)
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setattr("sys.argv", ["drain-cycle", flag])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    assert calls == [{"watch": True}]
+
+
+def test_watch_flag_prints_warning_when_tmux_not_set(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When ``--watch`` is used outside tmux, a one-time warning is printed."""
+    _stub_no_op_orchestrator(monkeypatch)
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setattr("sys.argv", ["drain-cycle", "--watch"])
+
+    with pytest.raises(SystemExit):
+        cli.main()
+
+    captured = capsys.readouterr()
+    assert "TMUX" in captured.err or "tmux" in captured.err.lower()
+
+
+def test_watch_flag_no_warning_when_tmux_set(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Inside a tmux session no extra warning is printed for ``--watch``."""
+    _stub_no_op_orchestrator(monkeypatch)
+    monkeypatch.setenv("TMUX", "/tmp/tmux-stub,1234,0")
+    monkeypatch.setattr("sys.argv", ["drain-cycle", "--watch"])
+
+    with pytest.raises(SystemExit):
+        cli.main()
+
+    captured = capsys.readouterr()
+    # No TMUX warning on stderr (drain-cycle: picked ... lines are fine).
+    stderr_lines = [l for l in captured.err.splitlines() if "tmux" in l.lower() and "warning" in l.lower()]
+    assert stderr_lines == []

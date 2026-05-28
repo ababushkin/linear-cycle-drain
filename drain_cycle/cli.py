@@ -44,31 +44,51 @@ def _load_secrets() -> None:
 
 
 _USAGE = (
-    "usage: drain-cycle              drain the current Linear cycle\n"
-    "       drain-cycle grade        print health read from run logs\n"
-    "       drain-cycle status       show status of the active run\n"
-    "       drain-cycle --help"
+    "usage: drain-cycle [--watch|-w]  drain the current Linear cycle\n"
+    "       drain-cycle grade         print health read from run logs\n"
+    "       drain-cycle status        show status of the active run\n"
+    "       drain-cycle --help\n"
+    "\n"
+    "options:\n"
+    "  --watch, -w   write a human-readable activity log per issue;\n"
+    "                open a tmux split-pane tailing it when inside tmux"
 )
+
+_WATCH_FLAGS = frozenset(["--watch", "-w"])
 
 
 def main() -> None:
+    import os
+
     _load_secrets()
     # Telemetry reads its key from the environment just populated above; a
     # no-op when HONEYCOMB_API_KEY is unset, so an unconfigured run is
     # unchanged. Registers its own atexit flush, hence no teardown here.
     telemetry.setup()
     argv = sys.argv[1:]
-    if not argv:
+
+    # Drain invocation: zero or more flags, no subcommand.
+    # Currently only --watch/-w is recognised.
+    remaining = [a for a in argv if a not in _WATCH_FLAGS]
+    watch = any(a in _WATCH_FLAGS for a in argv)
+
+    if not remaining:
+        if watch and not os.environ.get("TMUX"):
+            print(
+                "drain-cycle: --watch: $TMUX not set — watch log written but no tmux pane opened",
+                file=sys.stderr,
+            )
         try:
             loaded_repos = repos.load()
             loaded_limits = limits.load()
         except (repos.RepoConfigError, limits.LimitsConfigError) as exc:
             print(f"drain-cycle: {exc}", file=sys.stderr)
             sys.exit(1)
-        sys.exit(orchestrator.run(loaded_repos, loaded_limits))
-    if argv == ["grade"]:
+        sys.exit(orchestrator.run(loaded_repos, loaded_limits, watch=watch))
+
+    if remaining == ["grade"] and not watch:
         sys.exit(grade.run(grade.default_runs_dir()))
-    if argv == ["status"]:
+    if remaining == ["status"] and not watch:
         from . import status
         sys.exit(status.run())
     if argv in (["-h"], ["--help"]):
