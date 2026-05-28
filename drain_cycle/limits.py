@@ -82,6 +82,13 @@ class Limits:
 
     Defaults: per-issue 8M tokens · 20 min · $15; cycle 30M tokens ·
     90 min · $60.
+
+    ``max_resume_attempts`` is a *policy* cap, not a runtime guardrail:
+    it bounds how many times the orchestrator will spawn a worker for a
+    halted issue across re-runs before refusing further attempts
+    (default 3). ``None`` removes the cap so a perma-stuck issue keeps
+    being retried on every re-run. No ``Breach`` is raised when it
+    fires — the cap is checked pre-spawn against the run-log history.
     """
 
     per_issue_tokens: int | None = 8_000_000
@@ -90,6 +97,7 @@ class Limits:
     cycle_tokens: int | None = 30_000_000
     cycle_seconds: float | None = 90 * 60
     cycle_cost_usd: float | None = 60.0
+    max_resume_attempts: int | None = 3
 
 
 def default_config_path() -> Path:
