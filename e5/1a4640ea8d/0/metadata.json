@@ -3,42 +3,58 @@
   "checkpoint_id": "e51a4640ea8d",
   "session_id": "d2dda828-0c38-47ba-a4ef-5f6a4a2d55f3",
   "strategy": "manual-commit",
-  "created_at": "2026-05-28T02:35:17.702357Z",
+  "created_at": "2026-05-28T05:38:29.512458Z",
   "branch": "feat-worktree-ensure",
-  "checkpoints_count": 0,
+  "checkpoints_count": 2,
   "files_touched": [
     "drain_cycle/worktree.py",
     "tests/test_worktree.py"
   ],
   "agent": "Claude Code",
   "model": "claude-opus-4-7[1m]",
-  "turn_id": "7561f0534406",
+  "turn_id": "d7bf8f09349f",
   "token_usage": {
-    "input_tokens": 72,
-    "cache_creation_tokens": 263747,
-    "cache_read_tokens": 6622790,
-    "output_tokens": 15248,
-    "api_call_count": 52
+    "input_tokens": 237,
+    "cache_creation_tokens": 660450,
+    "cache_read_tokens": 23546835,
+    "output_tokens": 108937,
+    "api_call_count": 177
+  },
+  "session_metrics": {
+    "turn_count": 6
   },
   "initial_attribution": {
-    "calculated_at": "2026-05-28T02:35:17.662324Z",
-    "agent_lines": 214,
-    "agent_removed": 1,
-    "human_added": 8,
-    "human_modified": 19,
+    "calculated_at": "2026-05-28T05:38:29.46767Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 4,
     "human_removed": 0,
-    "total_committed": 241,
-    "total_lines_changed": 242,
-    "agent_percentage": 88.84297520661157,
+    "total_committed": 0,
+    "total_lines_changed": 4,
+    "agent_percentage": 0,
     "metric_version": 2
   },
   "prompt_attributions": [
     {
-      "checkpoint_number": 1,
+      "checkpoint_number": 2,
       "user_lines_added": 0,
       "user_lines_removed": 0,
       "agent_lines_added": 0,
       "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 51,
+      "user_lines_removed": 82,
+      "agent_lines_added": 160,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "docs/initiative-multi-agent-collaboration.md": 51
+      },
+      "user_removed_per_file": {
+        "docs/initiative-multi-agent-collaboration.md": 82
+      }
     }
   ]
 }

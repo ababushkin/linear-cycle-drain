@@ -3,7 +3,7 @@
   "checkpoint_id": "e51a4640ea8d",
   "strategy": "manual-commit",
   "branch": "feat-worktree-ensure",
-  "checkpoints_count": 0,
+  "checkpoints_count": 2,
   "files_touched": [
     "drain_cycle/worktree.py",
     "tests/test_worktree.py"
@@ -17,10 +17,10 @@
     }
   ],
   "token_usage": {
-    "input_tokens": 72,
-    "cache_creation_tokens": 263747,
-    "cache_read_tokens": 6622790,
-    "output_tokens": 15248,
-    "api_call_count": 52
+    "input_tokens": 237,
+    "cache_creation_tokens": 660450,
+    "cache_read_tokens": 23546835,
+    "output_tokens": 108937,
+    "api_call_count": 177
   }
 }
