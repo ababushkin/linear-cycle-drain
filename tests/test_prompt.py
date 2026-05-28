@@ -74,6 +74,56 @@ def test_tail_line_is_the_last_non_empty_line(tmp_path: Path) -> None:
     assert non_empty[-1] == _TAIL
 
 
+def test_resumed_prompt_inserts_directive_above_execution_instructions(
+    tmp_path: Path,
+) -> None:
+    """``resumed=True`` adds a resume directive that leads the preamble
+    so the agent reads it before the execution procedure, while ``_TAIL``
+    stays the last non-empty line (the four-segment ordering is
+    load-bearing)."""
+    issue = _fixture_issue()
+    worktree = tmp_path / ".worktrees" / issue["identifier"]
+    rendered = build(issue, worktree, resumed=True)
+
+    title_idx, body_idx, sep_idx, directive_idx, exec_idx, tail_idx = _positions(
+        rendered,
+        f"# {issue['title']}",
+        issue["description"],
+        "---",
+        "Resuming issue",
+        "Execution instructions:",
+        _TAIL,
+    )
+    assert title_idx < body_idx < sep_idx < directive_idx < exec_idx < tail_idx
+
+    # Directive names the issue and the two read-state commands the
+    # agent should run before continuing.
+    assert issue["identifier"] in rendered[directive_idx:exec_idx]
+    assert "git log --oneline main..HEAD" in rendered
+    assert "git status" in rendered
+
+    # _TAIL is still the last non-empty line — the prepend must not
+    # displace it from the trailing position.
+    non_empty = [line for line in rendered.splitlines() if line.strip()]
+    assert non_empty[-1] == _TAIL
+
+
+def test_unresumed_prompt_is_byte_identical_to_no_kwarg_default(
+    tmp_path: Path,
+) -> None:
+    """``resumed=False`` (the default) keeps the prompt unchanged: every
+    existing call site renders byte-identical output, and the resume
+    directive is absent."""
+    issue = _fixture_issue()
+    worktree = tmp_path / ".worktrees" / issue["identifier"]
+
+    default = build(issue, worktree)
+    explicit_false = build(issue, worktree, resumed=False)
+
+    assert default == explicit_false
+    assert "Resuming issue" not in default
+
+
 def test_empty_description_does_not_break_rendering(tmp_path: Path) -> None:
     issue = _fixture_issue()
     issue["description"] = None  # Linear can return null descriptions
