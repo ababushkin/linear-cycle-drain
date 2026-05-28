@@ -1,0 +1,44 @@
+go ahead
+
+---
+
+go
+
+---
+
+go
+
+---
+
+go
+
+---
+
+update all the PR descriptions using the following format:
+
+what
+why
+notes for reviewer - in this section focus on what you'd like reviewed/feedback
+
+write it in human-friendly language
+
+---
+
+i left review comments against the stacked PRs, namely 1, 3 and 4
+
+---
+
+i've merged, but i want to take away some of the key learnings and major improvements we incorporated in this run into a project
+
+either one that changes: agent-skills-shaper, agent-skills-workflow or drain-cycle
+
+step 1: articulate all the things we did that were a bit different so i can review it. for example, we used graphite and then we created a stack of PRs. we also iterated on the PR descriptions.
+step 2: go through my linear projects and see if i have any work that's already planned in to plug these workflow/tooling gaps - if they're ignore, if not, go to step 3
+step 3: for all things not planned in, generate a plan that i can review - if there is nothing to be planned in then tell me, don't make stuff up unnecessarily
+
+---
+
+Per-layer stop-and-wait completion ritual: I actually don't want this so this can be de-scoped
+Doc cross-reference discipline: the doc/design-decisions.md thing can be removed - that's very specific to this one project but not transferrable across other projects
+
+generate a plan that covers both issues
