@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "55ec74d83384",
+  "strategy": "manual-commit",
+  "branch": "feat-orchestrator-resume-wiring",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "README.md",
+    "docs/design-decisions.md",
+    "docs/limits.example.yml",
+    "drain_cycle/orchestrator.py",
+    "tests/test_orchestrator_resume.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/55/ec74d83384/0/metadata.json",
+      "transcript": "/55/ec74d83384/0/full.jsonl",
+      "content_hash": "/55/ec74d83384/0/content_hash.txt",
+      "prompt": "/55/ec74d83384/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 193,
+    "cache_creation_tokens": 535401,
+    "cache_read_tokens": 20575618,
+    "output_tokens": 92007,
+    "api_call_count": 148
+  }
+}

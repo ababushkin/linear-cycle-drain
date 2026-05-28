@@ -1,0 +1,57 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "55ec74d83384",
+  "session_id": "d2dda828-0c38-47ba-a4ef-5f6a4a2d55f3",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-28T04:39:50.435719Z",
+  "branch": "feat-orchestrator-resume-wiring",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "README.md",
+    "docs/design-decisions.md",
+    "docs/limits.example.yml",
+    "drain_cycle/orchestrator.py",
+    "tests/test_orchestrator_resume.py"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "aec1f51c5751",
+  "token_usage": {
+    "input_tokens": 193,
+    "cache_creation_tokens": 535401,
+    "cache_read_tokens": 20575618,
+    "output_tokens": 92007,
+    "api_call_count": 148
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-28T04:39:50.400319Z",
+    "agent_lines": 487,
+    "agent_removed": 5,
+    "human_added": 140,
+    "human_modified": 26,
+    "human_removed": 0,
+    "total_committed": 653,
+    "total_lines_changed": 658,
+    "agent_percentage": 74.77203647416414,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 160,
+      "agent_lines_removed": 0
+    }
+  ]
+}
