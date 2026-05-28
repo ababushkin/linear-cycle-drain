@@ -173,6 +173,173 @@ def test_linked_config_is_gitignored_in_worktree(tmp_path: Path) -> None:
     assert ".claude" not in status.stdout
 
 
+def test_ensure_fresh_creates_worktree_and_marks_resumed_false(tmp_path: Path) -> None:
+    """``ensure`` on a previously unseen identifier delegates to ``add``,
+    creating the worktree+branch and returning ``resumed=False``."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    handle = worktree.ensure(repo, "ABA-FRESH")
+
+    assert handle.resumed is False
+    assert handle.path == repo / worktree.WORKTREE_DIR / "ABA-FRESH"
+    assert handle.path.is_dir()
+    # The branch git just created points at HEAD on main.
+    branches = subprocess.run(
+        ["git", "branch", "--list", "ABA-FRESH"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "ABA-FRESH" in branches
+
+
+def test_ensure_reuse_preserves_dirty_state_and_runs_no_git_command(
+    tmp_path: Path,
+) -> None:
+    """A second ``ensure`` for an already-registered worktree returns the
+    same path with ``resumed=True``, and changes the worktree's git state
+    in no observable way: a committed file, a staged file, and an
+    untracked file all survive untouched. This pins the "no-op on git
+    state" guarantee that the dirty-tree acceptance criterion depends on.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    first = worktree.ensure(repo, "ABA-RESUME")
+    assert first.resumed is False
+
+    # Make the worktree dirty in three ways: a committed file on the
+    # issue branch, a staged-but-uncommitted file, and an untracked file.
+    (first.path / "committed.txt").write_text("committed\n")
+    subprocess.run(
+        ["git", "add", "committed.txt"],
+        cwd=first.path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "prior commit"],
+        cwd=first.path,
+        check=True,
+        capture_output=True,
+    )
+    (first.path / "staged.txt").write_text("staged\n")
+    subprocess.run(
+        ["git", "add", "staged.txt"],
+        cwd=first.path,
+        check=True,
+        capture_output=True,
+    )
+    (first.path / "untracked.txt").write_text("untracked\n")
+
+    status_before = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=first.path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    log_before = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=first.path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    second = worktree.ensure(repo, "ABA-RESUME")
+
+    assert second.resumed is True
+    assert second.path == first.path
+    # Status + log are byte-identical: ``ensure`` ran no mutating git command.
+    status_after = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=first.path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    log_after = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=first.path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert status_after == status_before
+    assert log_after == log_before
+    # All three dirty-state artefacts still exist.
+    assert (first.path / "committed.txt").read_text() == "committed\n"
+    assert (first.path / "staged.txt").read_text() == "staged\n"
+    assert (first.path / "untracked.txt").read_text() == "untracked\n"
+
+
+def test_ensure_leftover_branch_without_worktree_falls_through_to_add(
+    tmp_path: Path,
+) -> None:
+    """If the operator deletes the worktree directory but leaves the
+    branch behind, ``ensure`` does not auto-recover — it falls through
+    to ``add``, which raises ``RuntimeError`` (the orchestrator's halt
+    path)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    handle = worktree.ensure(repo, "ABA-LEFT")
+    # Simulate the partial-cleanup state: worktree gone, branch kept.
+    subprocess.run(
+        ["git", "worktree", "remove", str(handle.path)],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    branches = subprocess.run(
+        ["git", "branch", "--list", "ABA-LEFT"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "ABA-LEFT" in branches  # branch survived the partial cleanup
+
+    with pytest.raises(RuntimeError) as excinfo:
+        worktree.ensure(repo, "ABA-LEFT")
+    msg = str(excinfo.value)
+    assert "worktree add" in msg
+    assert "ABA-LEFT" in msg
+
+
+def test_ensure_link_project_config_idempotent_on_reuse(tmp_path: Path) -> None:
+    """A second ``link_project_config`` on a resumed worktree returns
+    an empty list (every name already lexists) and leaves the existing
+    symlink intact — confirming the orchestrator can call it
+    unconditionally after both fresh and reused ensures."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_gitignore(repo, ".claude", ".worktrees")
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text('{"hooks": {}}\n')
+
+    handle = worktree.ensure(repo, "ABA-CFG")
+    first_links = worktree.link_project_config(repo, handle.path, [".claude"])
+    assert first_links == [handle.path / ".claude"]
+    assert (handle.path / ".claude").is_symlink()
+
+    # Second call on the reused worktree returns nothing and the link
+    # is still pointing at the same target.
+    reused = worktree.ensure(repo, "ABA-CFG")
+    assert reused.resumed is True
+    second_links = worktree.link_project_config(repo, reused.path, [".claude"])
+    assert second_links == []
+    assert (handle.path / ".claude").is_symlink()
+    assert Path(os.readlink(handle.path / ".claude")) == repo.resolve() / ".claude"
+
+
 def test_remove_preserves_symlink_target(tmp_path: Path) -> None:
     """Removing the worktree deletes the symlink, not the repo's real dir."""
     repo = tmp_path / "repo"

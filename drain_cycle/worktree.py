@@ -1,7 +1,9 @@
 """Thin wrapper around ``git worktree``.
 
-Each issue gets ``.worktrees/<issue-identifier>/`` branched off ``main`` per
-README §3, used once, then removed on Done.
+Each issue gets ``.worktrees/<issue-identifier>/`` branched off ``main``,
+used once, then removed on Done — or preserved on halt so a later re-run
+can resume against the committed work (see ``docs/design-decisions.md``
+§14).
 
 ``git worktree`` stderr is captured and surfaced in the raised
 ``RuntimeError`` on failure. The orchestrator's pre-spawn try/except
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -20,6 +23,21 @@ from . import telemetry
 
 BASE_BRANCH = "main"
 WORKTREE_DIR = ".worktrees"
+
+
+@dataclass(frozen=True)
+class WorktreeHandle:
+    """A prepared worktree, together with whether it was reused.
+
+    ``resumed`` is ``True`` when ``ensure`` found a pre-existing worktree
+    registered at the expected path (typically left behind by an earlier
+    halted run). Callers thread the flag into the spawn-time prompt so
+    the agent knows it is continuing from prior committed work rather
+    than starting fresh.
+    """
+
+    path: Path
+    resumed: bool
 
 
 def add(repo: Path, identifier: str) -> Path:
@@ -37,6 +55,29 @@ def add(repo: Path, identifier: str) -> Path:
             cwd=repo,
         )
     return worktree_path
+
+
+def ensure(repo: Path, identifier: str) -> WorktreeHandle:
+    """Reuse a preserved worktree if one is already registered, else add.
+
+    A worktree registered at ``repo/.worktrees/<identifier>`` is reused
+    as-is — no mutating git command is run, so a dirty index, staged or
+    untracked files, and the gitignored config symlinks all survive
+    untouched. Any other state (no entry at that path) falls through to
+    :func:`add`, whose ``RuntimeError`` on a leftover branch or orphan
+    directory is what the orchestrator's existing pre-spawn handler
+    turns into the clean ``Halt: … — setup failed: …`` line.
+    """
+    worktree_path = repo / WORKTREE_DIR / identifier
+    with telemetry.tracer.start_as_current_span("drain.worktree.ensure") as span:
+        span.set_attribute("worktree.identifier", identifier)
+        span.set_attribute("worktree.repo", repo.name)
+        span.set_attribute("worktree.path", str(worktree_path))
+        if _is_registered_worktree(repo, worktree_path):
+            span.set_attribute("worktree.resumed", True)
+            return WorktreeHandle(path=worktree_path, resumed=True)
+        span.set_attribute("worktree.resumed", False)
+    return WorktreeHandle(path=add(repo, identifier), resumed=False)
 
 
 def link_project_config(
@@ -77,6 +118,38 @@ def remove(repo: Path, worktree_path: Path) -> None:
         span.set_attribute("worktree.repo", repo.name)
         span.set_attribute("worktree.path", str(worktree_path))
         _run_git(["worktree", "remove", str(worktree_path)], cwd=repo)
+
+
+def _is_registered_worktree(repo: Path, worktree_path: Path) -> bool:
+    """Return ``True`` if git lists a worktree at ``worktree_path``.
+
+    Parses ``git worktree list --porcelain -z`` for a ``worktree <path>``
+    record matching ``worktree_path.resolve()``. ``-z`` makes each record
+    NUL-separated and each field NUL-terminated, so paths with embedded
+    spaces or newlines are unambiguous. The resolve step matches git's
+    own canonicalisation (symlinks, ``..``) so a worktree under a
+    symlinked repo path still matches the entry git printed. A non-zero
+    git exit is treated as not-registered so ``ensure`` falls through to
+    ``add``, whose error surfaces git's real diagnostic via the
+    orchestrator's pre-spawn halt path.
+    """
+    target = worktree_path.resolve()
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain", "-z"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return False
+    for field in result.stdout.split("\0"):
+        if not field.startswith("worktree "):
+            continue
+        listed = Path(field.removeprefix("worktree "))
+        if listed.resolve() == target:
+            return True
+    return False
 
 
 def _run_git(args: list[str], *, cwd: Path) -> None:
