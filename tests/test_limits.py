@@ -33,6 +33,7 @@ def test_load_returns_defaults_when_file_absent(tmp_path: Path) -> None:
     assert loaded.cycle_tokens == 30_000_000
     assert loaded.cycle_seconds == 90 * 60
     assert loaded.cycle_cost_usd == 60.0
+    assert loaded.max_resume_attempts == 3
 
 
 def test_load_returns_defaults_when_file_empty(tmp_path: Path) -> None:
@@ -78,6 +79,36 @@ def test_load_rejects_non_positive_or_non_numeric(tmp_path: Path, value: str) ->
 def test_load_rejects_invalid_yaml(tmp_path: Path) -> None:
     with pytest.raises(limits.LimitsConfigError, match="not valid YAML"):
         limits.load(_write(tmp_path, "per_issue_tokens: [unclosed\n"))
+
+
+def test_load_max_resume_attempts_absent_keeps_default(tmp_path: Path) -> None:
+    """A ``limits.yml`` that omits ``max_resume_attempts`` keeps the baked-in
+    default of 3, matching the behaviour for every other guardrail key."""
+    loaded = limits.load(_write(tmp_path, "per_issue_tokens: 1000000\n"))
+    assert loaded.max_resume_attempts == 3
+
+
+def test_load_max_resume_attempts_null_disables_cap(tmp_path: Path) -> None:
+    """Explicit ``null`` turns the cap off so a perma-stuck issue keeps
+    being retried on every re-run — the operator opts into that risk."""
+    loaded = limits.load(_write(tmp_path, "max_resume_attempts: null\n"))
+    assert loaded.max_resume_attempts is None
+
+
+def test_load_max_resume_attempts_positive_override(tmp_path: Path) -> None:
+    loaded = limits.load(_write(tmp_path, "max_resume_attempts: 5\n"))
+    assert loaded.max_resume_attempts == 5
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "true", "abc"])
+def test_load_max_resume_attempts_rejects_non_positive_or_non_numeric(
+    tmp_path: Path, value: str
+) -> None:
+    """Same validation as the other guardrail keys: positive number or null,
+    nothing else. ``true`` would otherwise coerce to 1 and silently arm a
+    one-shot cap the operator never asked for."""
+    with pytest.raises(limits.LimitsConfigError, match="positive number or null"):
+        limits.load(_write(tmp_path, f"max_resume_attempts: {value}\n"))
 
 
 def test_check_cycle_no_breach_under_all_caps() -> None:
