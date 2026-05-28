@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "30f83e2e8920",
+  "strategy": "manual-commit",
+  "branch": "feat-prompt-resumed",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "drain_cycle/prompt.py",
+    "tests/test_prompt.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/30/f83e2e8920/0/metadata.json",
+      "transcript": "/30/f83e2e8920/0/full.jsonl",
+      "content_hash": "/30/f83e2e8920/0/content_hash.txt",
+      "prompt": "/30/f83e2e8920/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 16,
+    "cache_creation_tokens": 7915,
+    "cache_read_tokens": 2013212,
+    "output_tokens": 5153,
+    "api_call_count": 11
+  }
+}
