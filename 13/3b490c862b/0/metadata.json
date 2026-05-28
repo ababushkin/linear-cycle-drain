@@ -1,0 +1,55 @@
+{
+  "cli_version": "0.6.3",
+  "checkpoint_id": "133b490c862b",
+  "session_id": "9e1cf68c-904a-4bd4-96b7-0a979cf73c80",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-28T14:15:43.887759Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "drain_cycle/orchestrator.py",
+    "drain_cycle/worker.py",
+    "tests/test_orchestrator_watch.py",
+    "tests/test_worker.py"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-4-6",
+  "turn_id": "f881c89d3c48",
+  "checkpoint_transcript_start": 488,
+  "transcript_lines_at_start": 488,
+  "token_usage": {
+    "input_tokens": 24,
+    "cache_creation_tokens": 15674,
+    "cache_read_tokens": 2615397,
+    "output_tokens": 7959,
+    "api_call_count": 20
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-28T14:15:43.867965Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 54,
+    "human_modified": 17,
+    "human_removed": 0,
+    "total_committed": 54,
+    "total_lines_changed": 71,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 937,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "docs/initiative-multi-agent-collaboration.html": 742,
+        "docs/initiative-multi-agent-collaboration.md": 195
+      }
+    }
+  ]
+}
