@@ -183,8 +183,9 @@ def test_tmux_pane_opened_and_prior_pane_killed_on_next_issue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With $TMUX set and two issues: a pane is opened before each session;
-    the first pane is killed before the second issue starts; the second pane
-    is left open after the drain completes."""
+    the first pane is killed before the second issue starts (using the ID that
+    split-window returned, not the operator's active pane); the second pane is
+    left open after the drain completes."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -206,12 +207,12 @@ def test_tmux_pane_opened_and_prior_pane_killed_on_next_issue(
         if not (isinstance(args, list) and args and args[0] == "tmux"):
             return real_run(args, **kwargs)
         tmux_calls.append(list(args))
-        # Return a fake pane id for display-message calls.
-        if len(args) > 1 and args[1] == "display-message":
+        # split-window -P -F #{pane_id} returns the new pane's ID on stdout.
+        if len(args) > 1 and args[1] == "split-window":
             pane_id_counter[0] += 1
             mock = type("R", (), {"stdout": f"%{pane_id_counter[0]}\n", "returncode": 0})()
             return mock
-        return type("R", (), {"returncode": 0})()
+        return type("R", (), {"stdout": "", "returncode": 0})()
 
     monkeypatch.setattr(subprocess, "run", fake_tmux)
 
@@ -225,10 +226,15 @@ def test_tmux_pane_opened_and_prior_pane_killed_on_next_issue(
 
     # Two issues → two split-window calls.
     assert len(split_calls) == 2
-    # First pane killed before second issue starts.
-    assert len(kill_calls) >= 1
-    # Final pane NOT killed (only 1 kill for 2 splits).
+    # Exactly one kill: first pane killed before second issue, final left open.
     assert len(kill_calls) == 1
+    # The killed pane ID must be the one returned by the first split-window (%1),
+    # not the operator's active pane — this is the correctness pin for the
+    # split-window -P -F fix.
+    killed_target = kill_calls[0][kill_calls[0].index("-t") + 1]
+    assert killed_target == "%1", (
+        f"wrong pane killed: expected %1 (first tail pane), got {killed_target!r}"
+    )
 
 
 def test_watch_false_by_default_no_watch_logs(

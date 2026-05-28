@@ -221,6 +221,8 @@ def run_issue(
             _kill_process_group(proc)
             proc.wait()
         reader.join(timeout=_READER_JOIN_TIMEOUT_SECONDS)
+        if watch_writer is not None:
+            watch_writer.close()
         duration = time.monotonic() - started
 
         cost_usd, num_turns, session_id, is_error = accumulator.summary()
@@ -468,6 +470,18 @@ class _WatchWriter:
             self._write(f"\n=== done: {turns} turns, ${cost:.2f} ===")
         else:
             self._write(f"\n=== done: {turns} turns ===")
+        try:
+            self._file.close()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        """Close the file handle idempotently.
+
+        Called by the main thread after the reader thread is joined so the
+        handle is always released — even when the session was killed before a
+        ``result`` event arrived and ``_feed_result`` never ran.
+        """
         try:
             self._file.close()
         except OSError:

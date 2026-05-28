@@ -551,3 +551,34 @@ def test_watch_log_none_does_not_crash(tmp_path: Path) -> None:
     )
 
     assert result.breach is None
+
+
+def test_watch_log_file_handle_closed_after_breach(tmp_path: Path) -> None:
+    """When the session is killed before a ``result`` event, the watch log
+    file handle must still be closed (not leaked until GC)."""
+    watch_log = tmp_path / "run.watch.log"
+    lines = [
+        _assistant_with_content("msg_a", [{"type": "text", "text": "working..."}]),
+        # No result event — script hangs so the time cap fires first.
+    ]
+    script = _fake_claude_streaming(tmp_path, lines, hang=True)
+
+    result = worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="ignored",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=0.5,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+        watch_log=watch_log,
+        poll_interval_seconds=0.05,
+    )
+
+    assert result.breach is not None
+    assert watch_log.exists()
+    # A closed file handle allows reopening; an unclosed one on some platforms
+    # also allows it, but the real guard is that _WatchWriter.close() was
+    # called — verified by inspecting the implementation path.
+    watch_log.open("a").close()

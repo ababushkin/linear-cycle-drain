@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -43,19 +44,21 @@ def _now_iso() -> str:
 
 
 def _open_watch_pane(watch_log: Path) -> str | None:
-    """Open a tmux split-pane tailing ``watch_log``; return the pane ID or None.
+    """Open a tmux split-pane tailing ``watch_log``; return the new pane's ID or None.
 
-    Failures (tmux not on PATH, non-zero exit, any OS error) are swallowed so
-    a broken tmux environment never crashes the drain run.
+    ``split-window -P -F "#{pane_id}"`` prints the new pane's ID directly so
+    we capture the tail pane, not the operator's active pane (what
+    ``display-message`` without ``-t`` would return). Failures (tmux not on
+    PATH, non-zero exit, any OS error) are swallowed so a broken tmux
+    environment never crashes the drain run.
     """
     try:
-        subprocess.run(
-            ["tmux", "split-window", "-d", f"tail -f {watch_log}"],
-            check=True,
-            capture_output=True,
-        )
         result = subprocess.run(
-            ["tmux", "display-message", "-p", "#{pane_id}"],
+            [
+                "tmux", "split-window", "-d",
+                "-P", "-F", "#{pane_id}",
+                f"tail -f {shlex.quote(str(watch_log))}",
+            ],
             check=True,
             capture_output=True,
             text=True,
