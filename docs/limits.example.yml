@@ -1,8 +1,9 @@
 # Example ~/.drain-cycle/limits.yml
 #
-# Resource guardrails for drain-cycle workers. This file is OPTIONAL: with no
-# limits.yml, the baked-in defaults below are all live. Copy to
-# ~/.drain-cycle/limits.yml and edit only the caps you want to change.
+# Resource guardrails and the resume policy cap for drain-cycle workers.
+# This file is OPTIONAL: with no limits.yml, the baked-in defaults below
+# are all live. Copy to ~/.drain-cycle/limits.yml and edit only the caps
+# you want to change.
 #
 # Precedence: baked-in default -> this file. A key you omit keeps its default;
 # a number overrides it; `null` turns that guardrail OFF. Every value must be a
@@ -22,5 +23,12 @@ cycle_tokens: 30000000        # stop the cycle past this many cumulative tokens
 cycle_seconds: 5400           # stop the cycle past 90 minutes of wall-clock
 cycle_cost_usd: 60            # stop the cycle past this much total spend
 
+# Resume policy (not a runtime guardrail — see design-decisions.md §14):
+max_resume_attempts: 3        # respawn a halted issue up to this many times
+                              # across re-runs before refusing further attempts.
+                              # Counted from non-Done run-log entries for the
+                              # issue across this cycle's runs.
+
 # To disable a guardrail, set it to null, e.g.:
 #   per_issue_cost_usd: null
+#   max_resume_attempts: null   # never refuse a re-run of a perma-stuck issue

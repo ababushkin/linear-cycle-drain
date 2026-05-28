@@ -8,6 +8,7 @@ halt string — emitted both on stderr and into the run-log entry's
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -49,6 +50,46 @@ def _halt_message(identifier: str, state_name: str, worktree_path: Path) -> str:
     time.
     """
     return f"Halt: {identifier} (final state: {state_name}) at {worktree_path}"
+
+
+def _resume_attempts(cycle_id: str, identifier: str) -> int:
+    """Count prior halted attempts for ``identifier`` across this cycle's run logs.
+
+    Globs ``~/.drain-cycle/runs/<cycle_id>-*.json`` and tallies entries
+    whose ``issue_identifier`` matches and whose ``final_linear_state``
+    is not ``"Done"`` — the same shape every halt path writes. The
+    orchestrator compares this against ``limits.max_resume_attempts``
+    before spawning, so a perma-stuck issue stops consuming attempts
+    once its budget is spent.
+
+    Unreadable, unparseable, or shape-corrupted log files are skipped
+    rather than failed: a partial-write file from a SIGKILL'd earlier
+    run, or a file whose ``entries`` is missing/null/non-list, must
+    not pin the operator out of running the cycle. The shape checks
+    are isinstance-guarded so a JSON file that parses but doesn't
+    match :class:`RunLog`'s on-disk schema is treated as opaque rather
+    than crashing the helper.
+    """
+    count = 0
+    for path in runlog.runs_dir().glob(f"{cycle_id}-*.json"):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        entries = payload.get("entries")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if (
+                entry.get("issue_identifier") == identifier
+                and entry.get("final_linear_state") != "Done"
+            ):
+                count += 1
+    return count
 
 
 def _revert_to_pre_halt_state(
@@ -248,8 +289,49 @@ def _drain_one_issue(
 
         issue_span.set_attribute("issue.repo", target_repo.name)
 
+        # Resume-attempt cap fires BEFORE any worktree manipulation or
+        # Linear state change: a no-spawn refusal must leave the issue
+        # exactly where it was so a future re-run (after the operator
+        # raises the cap, clears prior runs, or finishes the work by
+        # hand) can pick up cleanly. The cap is a *policy* knob, not a
+        # runtime guardrail — no Breach is raised; see limits.py.
+        #
+        # ``max_resume_attempts=N`` allows up to N resumes after the
+        # initial attempt (one fresh + N resumes = N+1 total halts
+        # before refusal), matching the convention of ``max_retries`` in
+        # the stdlib's urllib3/requests world. The cap fires once
+        # ``prior_halts`` (count of non-Done entries for this issue in
+        # the cycle's run logs, written by *prior* runs since a halt
+        # exits this run) exceeds N.
+        if limits.max_resume_attempts is not None:
+            prior_halts = _resume_attempts(cycle_id, identifier)
+            if prior_halts > limits.max_resume_attempts:
+                planned_path = target_repo / worktree.WORKTREE_DIR / identifier
+                state_name = issue["state"]["name"]
+                halt_reason = (
+                    f"{_halt_message(identifier, state_name, planned_path)}"
+                    f" — resume-attempt cap reached "
+                    f"(all {limits.max_resume_attempts} resumes used); "
+                    "raise max_resume_attempts, clear prior runs, or finish by hand"
+                )
+                log.append_entry(
+                    issue_identifier=identifier,
+                    started_at=started_at,
+                    finished_at=_now_iso(),
+                    exit_code=-1,
+                    final_linear_state=state_name,
+                    worktree_path=str(planned_path),
+                    halt_reason=halt_reason,
+                )
+                issue_span.set_attribute("issue.final_linear_state", state_name)
+                issue_span.set_attribute("issue.resumed", True)
+                telemetry.mark_error(issue_span, "err-resume-cap", halt_reason)
+                print(halt_reason, file=sys.stderr)
+                return 1
+
         try:
-            worktree_path = worktree.add(target_repo, identifier)
+            handle = worktree.ensure(target_repo, identifier)
+            worktree_path = handle.path
             # A worktree checks out only tracked files, so gitignored
             # project config (.claude/, .mcp.json) is absent. Symlink it in
             # so the worker loads the same settings/hooks/agents/skills/MCP
@@ -286,7 +368,8 @@ def _drain_one_issue(
             print(halt_reason, file=sys.stderr)
             return 1
 
-        agent_prompt = prompt.build(issue, worktree_path)
+        agent_prompt = prompt.build(issue, worktree_path, resumed=handle.resumed)
+        issue_span.set_attribute("issue.resumed", handle.resumed)
         worker_model = model.resolve(issue)
         issue_span.set_attribute("issue.model", worker_model)
 
