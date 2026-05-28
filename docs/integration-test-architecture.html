@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integration test architecture</title>
+<style>
+  :root {
+    --bg: #fcfcfd;
+    --surface: #ffffff;
+    --fg: #0a0a0f;
+    --fg-soft: #2e2e38;
+    --muted: #5f5f6a;
+    --rule: #e3e3ea;
+    --rule-soft: #f1f1f5;
+    --accent: #4a3bef;       --accent-soft: #efedff;
+    --ok:     #047a44;       --ok-soft:     #e6f5ed;
+    --info:   #1957c4;       --info-soft:   #e7f0fd;
+    --warn:   #8b4a05;       --warn-soft:   #fbf0e0;
+    --danger: #a82a3f;       --danger-soft: #fbe6ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0b10; --surface: #15151c;
+      --fg: #f4f4f7;
+      --fg-soft: #d6d6dd;
+      --muted: #9d9dab;
+      --rule: #2a2a35; --rule-soft: #1c1c24;
+      --accent: #a99dff;       --accent-soft: #2a2548;
+      --ok:     #6fd4a0;       --ok-soft:     #122922;
+      --info:   #8eb8ff;       --info-soft:   #14233b;
+      --warn:   #f0a35a;       --warn-soft:   #2a1f12;
+      --danger: #f08597;       --danger-soft: #29151b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 16px/1.65 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-feature-settings: "cv11", "ss01", "ss03", "kern", "liga";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace; }
+
+  .layout { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; max-width: 1200px; margin: 0 auto; }
+
+  aside {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 28px 22px; border-right: 1px solid var(--rule); background: var(--bg);
+  }
+  aside .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; margin-bottom: 28px; color: var(--fg); }
+  aside .brand .dot { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, var(--accent), #8c7bff); flex-shrink: 0; }
+  aside .kicker { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 24px 0 10px; font-weight: 700; }
+  aside .kicker:first-of-type { margin-top: 0; }
+  aside nav ol { list-style: none; padding: 0; margin: 0; counter-reset: nav; }
+  aside nav li { counter-increment: nav; margin: 2px 0; }
+  aside nav li.h3 { margin-left: 28px; counter-increment: none; }
+  aside nav a {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px;
+    color: var(--fg-soft); font-size: 14.5px; transition: background 0.12s, color 0.12s;
+  }
+  aside nav li:not(.h3) > a::before { content: counter(nav, decimal-leading-zero); font: 600 12px/1 ui-monospace, monospace; color: var(--muted); width: 20px; flex-shrink: 0; }
+  aside nav a:hover { background: var(--rule-soft); color: var(--fg); text-decoration: none; }
+  aside nav a.active { background: var(--accent-soft); color: var(--accent); }
+  aside nav a.active::before { color: var(--accent); }
+  aside .status-block { font-size: 13.5px; color: var(--fg-soft); line-height: 1.55; }
+
+  main { padding: 40px 56px 80px; max-width: 860px; }
+
+  .doc-head { margin-bottom: 40px; }
+  .breadcrumbs { font-size: 13.5px; color: var(--muted); margin-bottom: 16px; }
+  .breadcrumbs span { color: var(--fg-soft); }
+  main h1 { font-size: 34px; line-height: 1.2; margin: 0 0 16px; letter-spacing: -0.02em; font-weight: 700; color: var(--fg); }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 0; }
+  .pill-row:empty { display: none; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px;
+    font: 600 13px/1 "Inter", ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.01em; white-space: nowrap;
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .pill-meta     { background: var(--rule-soft); color: var(--fg-soft); font-weight: 500; }
+  .pill-accepted, .pill-ok        { background: var(--ok-soft);     color: var(--ok); }
+  .pill-proposed, .pill-draft     { background: var(--info-soft);   color: var(--info); }
+  .pill-rejected, .pill-deprecated{ background: var(--danger-soft); color: var(--danger); }
+  .pill-superseded, .pill-flagged { background: var(--warn-soft);   color: var(--warn); }
+
+  .meta-grid {
+    display: grid; grid-template-columns: max-content 1fr; gap: 8px 22px;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 16px 20px; margin: 28px 0 0; font-size: 14px;
+  }
+  .meta-grid dt { color: var(--muted); font-weight: 600; }
+  .meta-grid dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13.5px; word-break: break-word; }
+
+  .preamble { margin: 36px 0 20px; padding: 0; color: var(--fg-soft); }
+  .preamble p { margin: 0 0 12px; }
+
+  section.s { margin: 56px 0; scroll-margin-top: 20px; }
+  section.s > header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+  section.s .ix { font: 700 12px/1 ui-monospace, monospace; color: var(--muted); padding: 4px 8px; border: 1px solid var(--rule); border-radius: 4px; flex-shrink: 0; }
+  main h2 { font-size: 22px; line-height: 1.3; margin: 0; letter-spacing: -0.01em; font-weight: 700; color: var(--fg); }
+  main h3 { font-size: 17px; line-height: 1.4; margin: 28px 0 10px; font-weight: 650; color: var(--fg); }
+  main h4 { font-size: 15px; line-height: 1.4; margin: 22px 0 8px; font-weight: 650; color: var(--fg); letter-spacing: 0.01em; }
+
+  main p { margin: 0 0 16px; color: var(--fg-soft); }
+  main ul, main ol { margin: 0 0 16px; padding-left: 26px; color: var(--fg-soft); }
+  main li { margin: 6px 0; }
+  main pre { background: var(--rule-soft); padding: 16px 18px; border-radius: 8px; overflow-x: auto; font-size: 14px; line-height: 1.6; border: 1px solid var(--rule); }
+  main code { font-size: 0.92em; padding: 2px 6px; background: var(--rule-soft); border-radius: 4px; color: var(--fg); }
+  main pre code { padding: 0; background: transparent; font-size: 1em; }
+  main blockquote { margin: 18px 0; padding: 10px 18px; border-left: 4px solid var(--accent); color: var(--fg-soft); background: var(--accent-soft); border-radius: 0 6px 6px 0; }
+  main table { border-collapse: collapse; margin: 16px 0; width: 100%; font-size: 14.5px; }
+  main th, main td { border-bottom: 1px solid var(--rule); padding: 10px 14px; text-align: left; vertical-align: top; }
+  main th { background: var(--rule-soft); font-weight: 700; color: var(--fg); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+  main hr { border: none; border-top: 1px solid var(--rule); margin: 40px 0; }
+
+  footer { grid-column: 1 / -1; padding: 24px 56px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--rule); }
+  footer code { background: transparent; padding: 0; color: var(--fg-soft); }
+
+  @media print {
+    aside { display: none; }
+    .layout { grid-template-columns: 1fr; }
+    main { padding: 24px; max-width: none; }
+  }
+
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule); padding: 20px; }
+    aside nav ol { display: flex; flex-wrap: wrap; gap: 4px; }
+    aside .kicker { margin-top: 16px; }
+    main { padding: 28px 24px 60px; }
+  }
+
+  /* P14 — diagram panels (system context + sequence) */
+  .p-diagram { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .p-diagram svg { display: block; min-width: 100%; max-width: 100%; height: auto; color: var(--muted); }
+  .p-diagram .p-node rect { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+  .p-diagram .p-node-emphasis rect { fill: var(--fg); stroke: var(--fg); }
+  .p-diagram .p-node-emphasis .p-node-title { fill: var(--bg); }
+  .p-diagram .p-node-emphasis .p-node-sub { fill: var(--rule); }
+  .p-diagram .p-node-title { font: 600 12px ui-sans-serif, system-ui, sans-serif; fill: var(--fg); }
+  .p-diagram .p-node-sub { font: 10.5px ui-monospace, monospace; fill: var(--muted); }
+  .p-diagram .p-edge { stroke: currentColor; stroke-width: 1.5; fill: none; }
+  .p-diagram .p-edge-async { stroke: var(--accent); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+  .p-diagram .p-edge-label { font: 10.5px ui-monospace, monospace; fill: var(--muted); }
+  .p-diagram-caption { font-size: 13.5px; color: var(--muted); margin: 12px 0 0; line-height: 1.55; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand"><span class="dot"></span><span>drain-cycle · design</span></div>
+    <p class="kicker">On this page</p>
+    <nav aria-label="Table of contents">
+      <ol>
+        <li><a href="#context">Context</a></li>
+        <li><a href="#system-context">System context</a></li>
+        <li><a href="#workflow">Workflow</a></li>
+        <li><a href="#approach">Approach</a></li>
+        <li class="h3"><a href="#cost-runtime-and-determinism">Cost, runtime, and determinism</a></li>
+        <li class="h3"><a href="#pillar-1-mocklinear">Pillar 1 — MockLinear</a></li>
+        <li class="h3"><a href="#pillar-2-linear-mcp-shim">Pillar 2 — linear_mcp_shim</a></li>
+        <li class="h3"><a href="#how-scenarios-steer-claude">How scenarios steer claude</a></li>
+        <li class="h3"><a href="#pillar-3-integrationharness">Pillar 3 — IntegrationHarness</a></li>
+        <li><a href="#production-code-changes-required">Production code changes required</a></li>
+        <li><a href="#test-infra-correctness-checks">Test-infra correctness checks</a></li>
+        <li><a href="#failure-mode-coverage">Failure-mode coverage</a></li>
+        <li><a href="#scenario-catalogue">Scenario catalogue</a></li>
+        <li><a href="#slices">Slices (verifiable build order)</a></li>
+        <li><a href="#critical-files">Critical files</a></li>
+        <li><a href="#verification">Verification</a></li>
+      </ol>
+    </nav>
+    <p class="kicker">Status</p>
+    <div class="status-block">Design doc for an active Linear initiative. Awaiting review before slice 1 lands.</div>
+  </aside>
+
+  <main>
+    <div class="doc-head">
+      <div class="breadcrumbs">drain-cycle <span>·</span> docs <span>·</span> integration test architecture</div>
+      <h1>Integration test architecture</h1>
+      <div class="pill-row"></div>
+      <dl class="meta-grid">
+        <dt>Linear initiative</dt><dd><a href="https://linear.app/ababushkin/project/test-drain-cycle-failure-modes-and-resume-without-a-real-linear-cycle-910b954af13f">Test drain-cycle failure modes and resume without a real Linear cycle</a></dd>
+        <dt>Source</dt><dd>docs/integration-test-architecture.md</dd>
+        <dt>Rendered</dt><dd>2026-05-28</dd>
+      </dl>
+    </div>
+
+    <div class="preamble">
+      <p>The OKR (Goal + Key Results + appetite + kill condition) is on the Linear project. This doc is the design — what gets built, why, in what order — and is the input to <code>shape-planning-and-task-breakdown</code> when the initiative is sliced into issues.</p>
+    </div>
+
+    <section class="s" id="context">
+      <header><span class="ix">01</span><h2>Context</h2></header>
+      <p>Today <code>drain-cycle</code> only tests against a real Linear cycle. Anything past happy-path becomes expensive: failure modes need deliberately broken issues, resume needs an actual halt-and-restart, and usage tracking needs real Claude sessions. Unit tests cover individual modules but stop at the function boundary — they monkey-patch <code>linear._post</code> and swap <code>claude -p</code> for marker-touching shell scripts (<code>tests/test_orchestrator_iteration.py:22</code>, <code>tests/test_linear_pending_issues.py:65</code>).</p>
+      <p>We need <strong>scenario-level integration tests</strong> that drive the orchestrator end-to-end against a controllable Linear surface, covering:</p>
+      <ul>
+        <li><strong>Best-case drains</strong> — dependency-ordered execution, runlog shape, state transitions</li>
+        <li><strong>Per-issue failure paths</strong> — every halt condition in <code>orchestrator._drain_one_issue</code> (repo resolution, worktree setup, <code>set_state</code> failure, breach kill, not-Done exit)</li>
+        <li><strong>Cycle-level halts</strong> — <code>DependencyCycleError</code>, cycle-cap breach propagation</li>
+        <li><strong>Resume semantics</strong> — halt mid-cycle, re-run, observe pickup of in-flight issues reverted to Todo</li>
+        <li><strong>Session/usage tracking</strong> — <code>_UsageAccumulator</code> totals, cycle aggregates in runlog, per-issue caps triggering breaches</li>
+      </ul>
+      <p>The drain has no native retry (deliberate, per <code>docs/design-decisions.md</code>); "retry" here means <strong>resume</strong> — a re-invocation against the same cycle.</p>
+    </section>
+
+    <section class="s" id="system-context">
+      <header><span class="ix">02</span><h2>System context</h2></header>
+      <p>The seam choice in one picture: real <code>claude -p</code>, mocked Linear, glued by an MCP shim that translates child MCP calls into GraphQL against the same in-memory store the parent hits over HTTP.</p>
+
+      <div class="p-diagram">
+        <svg viewBox="0 0 860 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Integration test system context: real harness, orchestrator, and claude-p on the left; mocked MockLinear, linear_mcp_shim, and shared in-memory store on the right.">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10z" fill="currentColor"/>
+            </marker>
+            <marker id="arr-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <rect x="300" y="8" width="540" height="344" rx="14" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="6 5"/>
+          <text x="820" y="26" text-anchor="end" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing="0.08em" font-family="Inter, ui-sans-serif, sans-serif">MOCKED</text>
+
+          <g class="p-node">
+            <rect x="40" y="30" width="200" height="60" rx="10"/>
+            <text x="140" y="56" text-anchor="middle" class="p-node-title">IntegrationHarness</text>
+            <text x="140" y="74" text-anchor="middle" class="p-node-sub">pytest fixture</text>
+          </g>
+          <g class="p-node">
+            <rect x="40" y="150" width="200" height="60" rx="10"/>
+            <text x="140" y="176" text-anchor="middle" class="p-node-title">orchestrator.run()</text>
+            <text x="140" y="194" text-anchor="middle" class="p-node-sub">parent · real</text>
+          </g>
+          <g class="p-node">
+            <rect x="40" y="270" width="200" height="60" rx="10"/>
+            <text x="140" y="296" text-anchor="middle" class="p-node-title">claude -p</text>
+            <text x="140" y="314" text-anchor="middle" class="p-node-sub">child · real · per issue</text>
+          </g>
+
+          <g class="p-node">
+            <rect x="340" y="30" width="200" height="60" rx="10"/>
+            <text x="440" y="56" text-anchor="middle" class="p-node-title">MockLinear</text>
+            <text x="440" y="74" text-anchor="middle" class="p-node-sub">FastAPI · GraphQL</text>
+          </g>
+          <g class="p-node">
+            <rect x="340" y="270" width="200" height="60" rx="10"/>
+            <text x="440" y="296" text-anchor="middle" class="p-node-title">linear_mcp_shim</text>
+            <text x="440" y="314" text-anchor="middle" class="p-node-sub">stdio MCP server</text>
+          </g>
+          <g class="p-node p-node-emphasis">
+            <rect x="620" y="150" width="200" height="60" rx="10"/>
+            <text x="720" y="176" text-anchor="middle" class="p-node-title">in-memory store</text>
+            <text x="720" y="194" text-anchor="middle" class="p-node-sub">cycle · issues · call log</text>
+          </g>
+
+          <path d="M240 56 L340 56" marker-end="url(#arr)" class="p-edge"/>
+          <text x="290" y="48" text-anchor="middle" class="p-edge-label">populate</text>
+
+          <path d="M140 90 L140 150" marker-end="url(#arr)" class="p-edge"/>
+          <text x="160" y="125" class="p-edge-label">run()</text>
+
+          <path d="M240 175 L340 70" marker-end="url(#arr)" class="p-edge"/>
+          <text x="298" y="118" class="p-edge-label">GraphQL HTTP</text>
+
+          <path d="M140 210 L140 270" marker-end="url(#arr)" class="p-edge"/>
+          <text x="160" y="245" class="p-edge-label">spawn</text>
+
+          <path d="M240 300 L340 300" marker-end="url(#arr-accent)" class="p-edge-async"/>
+          <text x="290" y="292" text-anchor="middle" class="p-edge-label">MCP stdio</text>
+
+          <path d="M440 270 L440 90" marker-end="url(#arr)" class="p-edge"/>
+          <text x="460" y="185" class="p-edge-label">GraphQL POST</text>
+
+          <path d="M540 70 L620 170" marker-end="url(#arr)" class="p-edge"/>
+          <text x="565" y="115" class="p-edge-label">writes</text>
+
+          <path d="M540 290 L620 195" marker-end="url(#arr)" class="p-edge"/>
+          <text x="565" y="255" class="p-edge-label">writes</text>
+        </svg>
+        <p class="p-diagram-caption">Solid = control / data flow over HTTP or subprocess. Dashed (accent) = MCP stdio between the child and the shim. The dashed boundary marks what's mocked: every byte that would otherwise hit <code>api.linear.app</code> is intercepted, but <code>claude -p</code> itself is the production binary every run. Both the parent's HTTP calls and the child's MCP calls land in one shared store, so scenarios assert against one unified call log.</p>
+      </div>
+    </section>
+
+    <section class="s" id="workflow">
+      <header><span class="ix">03</span><h2>Workflow</h2></header>
+      <ol>
+        <li><strong><code>/shape-initiative</code></strong> — done. Linear project created with the six-field OKR (linked above).</li>
+        <li><strong><code>shape-planning-and-task-breakdown</code></strong> — convert the <em>Slices</em> section below into Linear issues under the new initiative; assign slices 1–4 to the current cycle, 5–12 to the backlog.</li>
+        <li><strong><code>agent-skills:test-driven-development</code></strong> during build — each slice ships a failing scenario before the supporting infra.</li>
+        <li><strong><code>agent-skills:code-review-and-quality</code></strong> per slice before commit, per <code>AGENTS.md</code>.</li>
+      </ol>
+    </section>
+
+    <section class="s" id="approach">
+      <header><span class="ix">04</span><h2>Approach</h2></header>
+      <p><strong>Parent HTTP mock + Linear-MCP shim + real <code>claude -p</code> + in-process driver.</strong> The spawned session is real claude every time; only the Linear surface is mocked. Three pillars.</p>
+      <p><strong>Alternatives rejected</strong> (draft for the ADR slice):</p>
+      <ul>
+        <li><strong>Scripted/fake <code>claude -p</code>.</strong> Cheaper, faster, deterministic. Rejected because a scripted child stops being an integration test — it cannot validate the real session's usage stream, MCP tool calls, prompt-to-completion behaviour, or production OTel spans against actual data.</li>
+        <li><strong>Hybrid: real claude only on happy-path; scripted child for failure determinism.</strong> Two patterns to maintain; weaker default signal; gives up real-claude coverage on usage-tracking edge cases.</li>
+        <li><strong>Function-injection / <code>LinearClient</code> protocol on the parent.</strong> Cheaper than HTTP but skips the HTTP boundary and adds an abstraction layer that earns nothing else. The existing module-level functions in <code>linear.py</code> drive easily against an HTTP fake once <code>LINEAR_API_URL</code> is overridable.</li>
+        <li><strong>VCR-style recorded fixtures.</strong> Realistic but awkward for failure injection, expensive to maintain under schema drift.</li>
+      </ul>
+      <p>Slice 1 produces a short ADR at <code>docs/adrs/0001-integration-test-architecture.md</code> recording the chosen approach, these rejected alternatives, and revisit conditions.</p>
+
+      <h3 id="cost-runtime-and-determinism">Cost, runtime, and determinism</h3>
+      <p>Real claude makes the suite costly, slow, and non-deterministic on numbers.</p>
+      <ul>
+        <li><strong>Cost / runtime budget</strong>: ~$0.05–$0.20 per spawning scenario, ~15–30 seconds per scenario. Full suite of ~30 scenarios: ~$1–$3 and ~15 minutes. Run on demand, not as part of the default suite.</li>
+        <li><strong>Default <code>pytest</code> run</strong> covers only the pre-spawn halt scenarios (no claude spawned) — fast and deterministic, suitable for repeated local invocation while iterating.</li>
+        <li><strong>Determinism strategy</strong> — split assertions:
+          <ul>
+            <li><strong>Exact</strong> — exit codes, final Linear state, halt reason class, runlog file presence, structural shape of runlog JSON, set of MCP tool calls observed.</li>
+            <li><strong>Predicate</strong> — <code>tokens &gt; 0</code>, <code>0 &lt; cost_usd &lt; per_issue_cost_usd</code>, <code>num_turns &gt;= 1</code>, <code>model is not None</code>. No exact values.</li>
+            <li><strong>Tolerant snapshot</strong> — <code>dirty-equals</code> matches keys and types, ignores values.</li>
+          </ul>
+        </li>
+        <li><strong>Cost guard</strong>: scenarios that spawn claude carry <code>@pytest.mark.real_claude</code>. Default <code>pytest</code> invocation excludes the marker; the <code>real_claude</code> slice opts in via <code>pytest -m real_claude</code> and runs on demand. <code>ANTHROPIC_API_KEY</code> required.</li>
+      </ul>
+
+      <h3 id="pillar-1-mocklinear">Pillar 1 — <code>MockLinear</code>: an in-process fake GraphQL server</h3>
+      <p>A FastAPI/Starlette app on a random localhost port, started per-test via a pytest fixture. It speaks the five GraphQL operations <code>linear.py</code> uses (<code>current_cycle</code>, <code>pending_issues</code>, <code>get_issue</code>, <code>set_state</code>, <code>resolve_state</code> / WorkflowState lookup) plus an <code>IssueUpdate</code> mutation the scripted child hits to flip an issue to Done.</p>
+      <p>State lives in a typed in-memory store: <code>Cycle</code>, <code>Issue</code>, <code>Label</code>, <code>WorkflowState</code>. The store records every call (operation, variables, timestamp) so tests can assert call sequence and counts.</p>
+      <p>Fault injection is <strong>per-operation, per-call-index</strong>: <code>mock.fail_after(op="set_state", call=2, mode="http_500")</code>. Modes: <code>http_500</code>, <code>http_429</code>, <code>graphql_error</code>, <code>malformed_json</code>, <code>slow_response(seconds)</code>, <code>connection_reset</code>. The drain has no retry, so "fail" means "this single call breaks" — tests then verify the halt path.</p>
+      <p><strong>Production change required</strong>: <code>linear.py:18</code> hard-codes <code>https://api.linear.app/graphql</code>. Replace with <code>os.environ.get("LINEAR_API_URL", "https://api.linear.app/graphql")</code>. No CLI flag — env var only.</p>
+
+      <h3 id="pillar-2-linear-mcp-shim">Pillar 2 — <code>linear_mcp_shim</code>: a Linear MCP server backed by the mock</h3>
+      <p>A small Python stdio MCP server (built on the official <code>mcp</code> SDK) that exposes the two tools the drain-cycle prompt uses today: <code>save_issue</code> (state transitions) and <code>save_comment</code>. Each tool translates its call into a GraphQL POST against <code>MockLinear</code>, sharing the same backing store as the parent's HTTP surface.</p>
+      <p>The harness writes a custom <code>.mcp.json</code> into each test worktree registering the shim under the name <code>linear</code> (matching the existing tool prefix <code>mcp__claude_ai_Linear__*</code>). The orchestrator already symlinks <code>.mcp.json</code> from the configured source into the worktree (<code>orchestrator.py:257-259</code>); the harness arranges for the test source to be the shim-configured file.</p>
+      <p>The shim records every tool call (tool name, arguments, timestamp) on the shared store, so scenarios assert against both parent GraphQL calls and child MCP calls through one call log.</p>
+      <p><strong>Why an MCP shim and not just <code>LINEAR_API_URL</code> in the child env.</strong> MCP is a separate protocol from raw GraphQL; the official Linear MCP server speaks MCP over stdio to claude and HTTPS to Linear. Setting <code>LINEAR_API_URL</code> in the child has no effect — there's no way to redirect the official server without forking it. A purpose-built shim is the smallest seam.</p>
+
+      <h4 id="happy-path-sequence">Happy-path sequence</h4>
+      <p>The seam closes end-to-end. One issue, picked up and driven to Done:</p>
+
+      <div class="p-diagram">
+        <svg viewBox="0 0 860 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sequence diagram of a single-issue happy-path drain showing messages between Harness, orchestrator, MockLinear, claude-p, and linear_mcp_shim.">
+          <defs>
+            <marker id="seq-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10z" fill="currentColor"/>
+            </marker>
+            <marker id="seq-arr-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <g class="p-node">
+            <rect x="20" y="20" width="120" height="44" rx="8"/>
+            <text x="80" y="47" text-anchor="middle" class="p-node-title">Harness</text>
+          </g>
+          <g class="p-node">
+            <rect x="180" y="20" width="140" height="44" rx="8"/>
+            <text x="250" y="47" text-anchor="middle" class="p-node-title">orchestrator</text>
+          </g>
+          <g class="p-node">
+            <rect x="360" y="20" width="140" height="44" rx="8"/>
+            <text x="430" y="47" text-anchor="middle" class="p-node-title">MockLinear</text>
+          </g>
+          <g class="p-node">
+            <rect x="540" y="20" width="120" height="44" rx="8"/>
+            <text x="600" y="47" text-anchor="middle" class="p-node-title">claude -p</text>
+          </g>
+          <g class="p-node">
+            <rect x="700" y="20" width="140" height="44" rx="8"/>
+            <text x="770" y="47" text-anchor="middle" class="p-node-title">linear_mcp_shim</text>
+          </g>
+
+          <line x1="80"  y1="64" x2="80"  y2="475" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="4 4"/>
+          <line x1="250" y1="64" x2="250" y2="475" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="4 4"/>
+          <line x1="430" y1="64" x2="430" y2="475" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="4 4"/>
+          <line x1="600" y1="64" x2="600" y2="475" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="4 4"/>
+          <line x1="770" y1="64" x2="770" y2="475" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+          <path d="M80 95 L430 95" marker-end="url(#seq-arr)" class="p-edge"/>
+          <text x="255" y="88" text-anchor="middle" class="p-edge-label">populate(Cycle, Issue)</text>
+
+          <path d="M80 130 L250 130" marker-end="url(#seq-arr)" class="p-edge"/>
+          <text x="165" y="123" text-anchor="middle" class="p-edge-label">run(repos, limits)</text>
+
+          <path d="M250 170 L430 170" marker-end="url(#seq-arr)" class="p-edge"/>
+          <text x="340" y="163" text-anchor="middle" class="p-edge-label">pending_issues</text>
+          <path d="M430 195 L250 195" marker-end="url(#seq-arr)" class="p-edge" stroke-dasharray="4 4"/>
+          <text x="340" y="210" text-anchor="middle" class="p-edge-label">[Issue]</text>
+
+          <path d="M250 240 L430 240" marker-end="url(#seq-arr)" class="p-edge"/>
+          <text x="340" y="233" text-anchor="middle" class="p-edge-label">set_state(In-Progress)</text>
+
+          <path d="M250 280 L600 280" marker-end="url(#seq-arr)" class="p-edge"/>
+          <text x="425" y="273" text-anchor="middle" class="p-edge-label">spawn</text>
+
+          <path d="M600 320 L770 320" marker-end="url(#seq-arr-accent)" class="p-edge-async"/>
+          <text x="685" y="313" text-anchor="middle" class="p-edge-label">get_issue (MCP)</text>
+          <path d="M770 345 L430 345" marker-end="url(#seq-arr)" class="p-edge"/>
+          <text x="600" y="338" text-anchor="middle" class="p-edge-label">GraphQL get_issue</text>
+
+          <path d="M600 385 L770 385" marker-end="url(#seq-arr-accent)" class="p-edge-async"/>
+          <text x="685" y="378" text-anchor="middle" class="p-edge-label">save_issue(Done) · save_comment</text>
+          <path d="M770 410 L430 410" marker-end="url(#seq-arr)" class="p-edge"/>
+          <text x="600" y="403" text-anchor="middle" class="p-edge-label">GraphQL set_state(Done)</text>
+
+          <path d="M250 455 L430 455" marker-end="url(#seq-arr)" class="p-edge"/>
+          <text x="340" y="448" text-anchor="middle" class="p-edge-label">get_issue (verify Done)</text>
+        </svg>
+        <p class="p-diagram-caption">The parent (left half) talks to <code>MockLinear</code> directly over HTTP. The child (right half) reaches the same store indirectly, via <code>linear_mcp_shim</code> over MCP stdio. Both write into the in-memory store, so the test's call log records the full conversation across both surfaces — the parent's <code>pending_issues</code> / <code>set_state</code> calls and the child's <code>save_issue</code> / <code>save_comment</code> calls interleave in one ordered list that scenarios assert against.</p>
+      </div>
+
+      <h3 id="how-scenarios-steer-claude">How scenarios steer claude</h3>
+      <p>Scenarios drive child behaviour through three knobs the harness sets per-scenario:</p>
+      <ul>
+        <li><strong>Issue body</strong> — written into <code>MockLinear</code> and read by claude via <code>mcp__claude_ai_Linear__get_issue</code>. The body is the natural prompt seam (e.g. "create <code>&lt;id&gt;.txt</code> containing 'hello'; then mark this issue Done"). Library lives in <code>tests/integration/prompts/*.md</code>.</li>
+        <li><strong>Per-issue limits</strong> — <code>limits.yml</code> overrides (e.g. <code>per_issue_tokens=2000</code>, <code>per_issue_seconds=30</code>) used with verbose prompts to provoke breach scenarios deterministically.</li>
+        <li><strong>Claude flags</strong> — the harness may inject <code>--max-turns 1</code> for "exit without Done" cases (claude exits before completing the workflow), via the <code>_CLAUDE_CMD</code> patch point at <code>orchestrator.py:25</code>.</li>
+      </ul>
+      <p>The drain-cycle prompt (<code>drain_cycle/prompt.py:39-42</code>) stays unchanged — same prompt the real drain uses.</p>
+
+      <h3 id="pillar-3-integrationharness">Pillar 3 — <code>IntegrationHarness</code>: a fixture that drives <code>orchestrator.run()</code> in-process</h3>
+      <p>A pytest fixture that:</p>
+      <ul>
+        <li>Creates a temp <code>HOME</code> so <code>~/.drain-cycle/repos.yml</code>, <code>~/.drain-cycle/limits.yml</code>, and <code>~/.drain-cycle/runs/</code> redirect to a tmpdir (<code>monkeypatch.setenv("HOME", ...)</code> plus any path-resolution helpers in <code>cli.py</code> / <code>runlog.py</code>).</li>
+        <li>Initialises one or more real git repos in tmpdir (existing pattern in <code>test_orchestrator_iteration.py</code>).</li>
+        <li>Writes a <code>repos.yml</code> mapping label names to those repo paths.</li>
+        <li>Writes a <code>.mcp.json</code> in each repo registering the Linear-MCP shim under <code>linear</code>.</li>
+        <li>Starts <code>MockLinear</code> and populates it with the scenario's cycle, issues (with prompt body), and labels.</li>
+        <li>Sets <code>LINEAR_API_URL</code>, <code>LINEAR_API_KEY=test</code>, <code>MOCK_LINEAR_URL=http://localhost:&lt;port&gt;</code>, <code>OTEL_SDK_DISABLED=true</code> env vars. Verifies <code>ANTHROPIC_API_KEY</code> is set for scenarios that spawn claude.</li>
+        <li>Optionally appends extra flags to <code>_CLAUDE_CMD</code> (e.g. <code>--max-turns 1</code>) for scenarios that need to coerce claude's behaviour.</li>
+        <li>Calls <code>orchestrator.run(repos, limits)</code> directly and returns a <code>Result</code>: exit code, runlog JSON, parent GraphQL call log, child MCP call log, final mock state.</li>
+      </ul>
+      <p>Tests assert against <code>Result</code>. One scenario per <code>test_*</code> function. Helpers (<code>make_cycle</code>, <code>make_issue</code>, <code>expect_runlog</code>, <code>expect_calls</code>) keep scenarios short.</p>
+      <p><strong>Per-scenario contract.</strong> Every scenario declares:</p>
+      <ol>
+        <li><strong>Setup</strong> — <code>Cycle</code>, <code>Issue[]</code>, <code>Label[]</code>, <code>WorkflowState[]</code>, repos.yml mapping, limits.yml overrides, transcript fixture name(s), any fault injection.</li>
+        <li><strong>Expected exit code</strong> — orchestrator return.</li>
+        <li><strong>Expected runlog assertions</strong> — a list of (a) structural shape (keys, types) matched via <code>dirty-equals</code>, (b) predicate assertions on numeric fields (<code>tokens &gt; 0</code>, <code>cost_usd &lt; limits.per_issue_cost_usd</code>), (c) exact assertions on deterministic fields (<code>final_linear_state</code>, <code>halt_reason</code>).</li>
+        <li><strong>Expected final mock state</strong> — issue states the mock should end in (e.g. <code>{ "ABA-1": "Done", "ABA-2": "Todo" }</code> after a halt on issue 2).</li>
+        <li><strong>Expected call sequence</strong> — ordered <code>(surface, operation, predicate-on-args)</code> tuples across both parent GraphQL and child MCP calls. Strict by default; <code>expect_calls(strict=False)</code> for tolerant cases where claude's tool-call order varies between runs.</li>
+      </ol>
+      <p>A collection-time lint test fails any scenario missing (3), (4), or (5).</p>
+    </section>
+
+    <section class="s" id="production-code-changes-required">
+      <header><span class="ix">05</span><h2>Production code changes required</h2></header>
+      <p>Minimal. Every test-only seam reuses existing structure.</p>
+      <ol>
+        <li><strong><code>drain_cycle/linear.py:18</code></strong> — <code>_GRAPHQL_URL</code> reads from <code>LINEAR_API_URL</code> env var, default unchanged. One-line change.</li>
+        <li><strong><code>drain_cycle/runlog.py</code></strong> — verify the run-log directory honours <code>HOME</code> re-resolution; slice 1 greps for <code>Path.home</code>, <code>expanduser</code>, and <code>HOME</code>. If the path caches at module load, add an accessor (e.g. <code>_run_log_dir()</code>) so the harness re-resolves after <code>monkeypatch.setenv("HOME", ...)</code>.</li>
+        <li><strong><code>drain_cycle/orchestrator.py:25</code></strong> — <code>_CLAUDE_CMD</code> is already module-level. Tests patch it.</li>
+      </ol>
+      <p>No new abstraction layers, no <code>LinearClient</code> Protocol — the existing module-level functions drive easily against an HTTP fake once the URL is configurable.</p>
+    </section>
+
+    <section class="s" id="test-infra-correctness-checks">
+      <header><span class="ix">06</span><h2>Test-infra correctness checks (one-time pre-slice work)</h2></header>
+      <p>Risks the plan-review surfaced. Each lands before dependent slices.</p>
+      <ul>
+        <li><strong>Telemetry isolation</strong> — drain-cycle wires httpx OTel auto-instrumentation in <code>telemetry.py</code>. The harness sets <code>OTEL_SDK_DISABLED=true</code> to keep tests from exporting spans. Confirmed in slice 2.</li>
+        <li><strong>MCP-shim correctness</strong> — the shim must implement the same tool schemas the official Linear MCP exposes for <code>save_issue</code> and <code>save_comment</code>, otherwise claude's tool calls land with wrong shapes. Slice 3 spike: capture the official schemas (from the Linear MCP docs or by running the real one briefly), implement matching ones in the shim, verify a single happy-path drain reaches Done end-to-end. <strong>Kill-switch</strong>: if the schemas drift between Linear MCP versions, pin the shim to a captured snapshot and add a periodic check.</li>
+        <li><strong>Breach scenario reproducibility</strong> — with real claude, breach scenarios depend on prompts that reliably exceed tight per-issue caps. Slice 8 spike: confirm a verbose prompt (e.g. "write a 2000-line poem") plus <code>per_issue_tokens=1000</code> reliably triggers token breach across 5 consecutive runs. <strong>Kill-switch</strong>: if not reliable, fall back to time-breach only (tight <code>per_issue_seconds</code> plus a "sleep 60s" prompt is robust because the breach loop polls wall-clock).</li>
+      </ul>
+    </section>
+
+    <section class="s" id="failure-mode-coverage">
+      <header><span class="ix">07</span><h2>Failure-mode coverage</h2></header>
+      <p>The matrix below names every halt path in the production code and the scenario that covers it. KR 2's halt-coverage guard fails the suite when a new halt slug lands without a matching row.</p>
+      <table>
+        <thead>
+          <tr><th>Halt path</th><th>Source</th><th>Scenario</th><th>Spawns claude?</th><th>Slice</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Missing <code>repo:</code> label</td><td><code>orchestrator.py</code> repo-resolve</td><td><code>test_pre_spawn_halts::test_missing_repo_label</code></td><td>no</td><td>7</td></tr>
+          <tr><td><code>repo:</code> label → nonexistent path</td><td><code>orchestrator.py</code> repo-resolve</td><td><code>test_pre_spawn_halts::test_unknown_repo_path</code></td><td>no</td><td>7</td></tr>
+          <tr><td>Worktree <code>add</code> fails</td><td><code>orchestrator.py</code> worktree</td><td><code>test_pre_spawn_halts::test_dirty_worktree</code></td><td>no</td><td>7</td></tr>
+          <tr><td><code>set_state</code> (Todo→In-Progress) HTTP 500</td><td><code>linear.py</code> set_state</td><td><code>test_pre_spawn_halts::test_set_state_500</code></td><td>no</td><td>6</td></tr>
+          <tr><td>Child exits without setting Done</td><td><code>orchestrator._drain_one_issue</code></td><td><code>test_real_claude_halts::test_not_done_exit</code></td><td>yes (<code>--max-turns 1</code>)</td><td>8</td></tr>
+          <tr><td>Child exits non-zero</td><td><code>orchestrator._drain_one_issue</code></td><td><code>test_real_claude_halts::test_child_nonzero</code></td><td>yes</td><td>8</td></tr>
+          <tr><td>Per-issue token cap exceeded</td><td><code>worker.py</code> breach loop</td><td><code>test_breach::test_token_cap</code></td><td>yes (verbose prompt)</td><td>9</td></tr>
+          <tr><td>Per-issue time cap exceeded</td><td><code>worker.py</code> breach loop</td><td><code>test_breach::test_time_cap</code></td><td>yes (<code>wait 60s</code> prompt)</td><td>9</td></tr>
+          <tr><td>Revert <code>set_state</code> (In-Progress→Todo) fails after halt</td><td><code>orchestrator.py</code> revert</td><td><code>test_real_claude_halts::test_revert_failure</code></td><td>either</td><td>8</td></tr>
+          <tr><td><code>DependencyCycleError</code> from <code>pending_issues</code></td><td><code>linear.py</code> pending_issues</td><td><code>test_cycle_halts::test_dep_cycle</code></td><td>no</td><td>10</td></tr>
+          <tr><td>Cycle-cap breach after N Done</td><td><code>worker.py</code> cycle accumulator</td><td><code>test_cycle_halts::test_cycle_cap</code></td><td>yes</td><td>10</td></tr>
+          <tr><td>Linear 429 / malformed JSON / slow-beyond-timeout</td><td><code>linear._post</code></td><td><code>test_linear_edges::*</code></td><td>no</td><td>12</td></tr>
+        </tbody>
+      </table>
+      <p>Source paths are illustrative — the halt-coverage guard (<code>test_halt_coverage</code>) reads them from <code>mark_error</code> slugs in <code>drain_cycle/**.py</code> at suite time. A new halt slug with no matching row fails the suite loudly.</p>
+    </section>
+
+    <section class="s" id="scenario-catalogue">
+      <header><span class="ix">08</span><h2>Scenario catalogue (initial coverage)</h2></header>
+      <p>Grouped by area; one test function each. Target end-state, not a single slice — slices below build the infra and add scenarios incrementally.</p>
+      <p>Scenarios that spawn <code>claude -p</code> carry <code>@pytest.mark.real_claude</code> (excluded from the default <code>pytest</code> run; opt-in via <code>-m real_claude</code>). Scenarios that halt pre-spawn run on every default invocation.</p>
+
+      <p><strong>Best case</strong> <em>(real_claude)</em></p>
+      <ul>
+        <li>3-issue dependency-ordered drain reaches Done in order; runlog totals positive and sum across issues; child MCP calls include <code>save_issue</code> (transition to Done) and <code>save_comment</code> (summary) per issue</li>
+        <li>Mixed Todo + Backlog states picked up; correct planning</li>
+        <li>Single-issue drain</li>
+        <li>Empty cycle exits cleanly <em>(no claude spawned)</em></li>
+      </ul>
+
+      <p><strong>Per-issue halts</strong> (<code>orchestrator._drain_one_issue</code> paths)</p>
+      <ul>
+        <li>Missing <code>repo:</code> label → halt + reason <em>(no claude spawned)</em></li>
+        <li><code>repo:</code> label resolves to nonexistent path → halt <em>(no claude spawned)</em></li>
+        <li>Worktree <code>add</code> fails (dirty tree) → halt <em>(no claude spawned)</em></li>
+        <li><code>set_state</code> (Todo→In-Progress) fails with HTTP 500 → halt <em>(no claude spawned)</em></li>
+        <li>Child exits without setting Done <em>(real_claude; coerced via <code>--max-turns 1</code>)</em> → halt + reason matches <code>final_linear_state</code></li>
+        <li>Child exits non-zero <em>(real_claude; provoked by an invalid prompt or a tool that errors)</em> → halt</li>
+        <li>Per-issue token cap exceeded mid-stream <em>(real_claude; verbose prompt + <code>per_issue_tokens=1000</code>)</em> → breach kill; runlog records breach scope/metric/limit/observed</li>
+        <li>Per-issue time cap exceeded <em>(real_claude; prompt "wait 60s" + <code>per_issue_seconds=10</code>)</em> → time breach recorded</li>
+        <li>Revert <code>set_state</code> (In-Progress→Todo) fails after a halt → halt-reason concatenates <em>(real_claude or pre-spawn)</em></li>
+      </ul>
+
+      <p><strong>Cycle-level halts</strong></p>
+      <ul>
+        <li><code>DependencyCycleError</code> from <code>pending_issues</code> → halt before any issue attempted; <code>cycle_halt_reason</code> set; runlog otherwise empty <em>(no claude spawned)</em></li>
+        <li>After two Done issues, cycle-cap breach detected → third issue not attempted; halt reason names cumulative metric <em>(real_claude)</em></li>
+      </ul>
+
+      <p><strong>Resume</strong> <em>(real_claude)</em></p>
+      <ul>
+        <li>Run halts on issue 2; re-run with the same cycle picks up issue 2 (mock has it back at Todo via the revert) and issue 3; second runlog file separate from first; final mock state correct</li>
+      </ul>
+
+      <p><strong>Session / usage tracking</strong> <em>(real_claude; predicate assertions on numbers)</em></p>
+      <ul>
+        <li>Single-issue drain produces <code>usage.cumulative.input_tokens &gt; 0</code>, <code>usage.cumulative.output_tokens &gt; 0</code>, <code>peak_context &gt; 0</code>, <code>cost_usd &gt; 0</code>, <code>num_turns &gt;= 1</code>, <code>session_id</code> non-empty, <code>is_error == false</code>, <code>model</code> non-empty</li>
+        <li>Multi-issue drain: cycle aggregates (<code>cycle_tokens_cumulative</code>, <code>cycle_cost_usd</code>, <code>cycle_duration_seconds</code>) equal the sum of per-issue values</li>
+        <li>Worker dedup invariant (<code>worker.py:416</code>) verified indirectly: re-emit a non-deterministic prompt and confirm <code>usage.cumulative</code> is monotonically non-decreasing within a turn; explicit dedup behaviour stays unit-tested</li>
+      </ul>
+
+      <p><strong>Linear edge cases</strong> <em>(no claude spawned — parent halts before pre-spawn <code>set_state</code> succeeds)</em></p>
+      <ul>
+        <li>500, 429, GraphQL error, malformed JSON, slow-within-timeout (drain proceeds), slow-beyond-timeout (halts)</li>
+      </ul>
+
+      <p><strong>Out of scope for MVP</strong></p>
+      <ul>
+        <li>Honeycomb/OTel span assertions (separate slice — needs a fake OTLP collector; production code wires spans cleanly per <code>drain_cycle/telemetry.py</code>)</li>
+        <li>True MCP-server fake for children (scripted-child + direct GraphQL POST satisfies the contract)</li>
+      </ul>
+
+      <p><strong>In MVP, bounded</strong> — slice 4 ships one subprocess smoke test that spawns the real <code>drain-cycle</code> binary against the mock and asserts exit code plus runlog presence. This single test covers <code>cli.py</code>'s secrets-load order and process exit-code path. Larger subprocess scenarios stay out of scope.</p>
+
+      <p><strong>Note on the worker <code>_UsageAccumulator</code> dedup invariant</strong> — the worker dedupes by <code>message.id</code> (<code>worker.py:416</code>). Real claude rarely emits duplicate ids in practice, so the dedup branch is exercised by existing unit tests, not by integration scenarios. Plan accordingly: keep the dedup unit test (<code>test_usage_accumulator_dedup.py</code> or equivalent); the integration suite asserts on monotonicity, not on dedup directly.</p>
+    </section>
+
+    <section class="s" id="slices">
+      <header><span class="ix">09</span><h2>Slices (verifiable build order)</h2></header>
+      <p>Each slice ships in one session and ends with a passing scenario.</p>
+      <ol>
+        <li><strong>Production seam + ADR</strong> — <code>LINEAR_API_URL</code> env var in <code>linear.py</code>; unit test confirms override; default unchanged. Runlog <code>HOME</code> re-resolution verified (grep + accessor if needed). <strong>Deliverable</strong>: <code>docs/adrs/0001-integration-test-architecture.md</code> recording the chosen approach, rejected alternatives, and revisit conditions.</li>
+        <li><strong><code>MockLinear</code> skeleton</strong> — FastAPI app with <code>current_cycle</code> and <code>pending_issues</code> only; serves a hard-coded scenario; one unit test wires through <code>linear.py</code> and confirms the call lands on the mock. Harness sets <code>OTEL_SDK_DISABLED=true</code>.</li>
+        <li><strong><code>linear_mcp_shim</code> + first real-claude drain</strong> — stdio MCP server implementing <code>save_issue</code> and <code>save_comment</code> against the mock; harness writes a <code>.mcp.json</code> registering it; first <strong>real-claude</strong> happy-path drain of one issue reaches Done end-to-end. Schemas captured from the official Linear MCP. Marked <code>@pytest.mark.real_claude</code>.</li>
+        <li><strong><code>IntegrationHarness</code> fixture + subprocess smoke</strong> — tmpdir HOME, repos.yml, real git repo, <code>.mcp.json</code> writer, mock startup. Slice 3's scenario refactored onto the harness. <strong>Plus</strong>: one subprocess test spawns <code>drain-cycle</code> against the mock end-to-end and asserts exit code plus runlog file existence.</li>
+        <li><strong>Mock GraphQL completeness + drift guard</strong> — add <code>get_issue</code>, <code>set_state</code>, WorkflowState resolution; happy-path drain of 3 ordered issues passes. <strong>Plus</strong>: <code>test_linear_surface_audit</code> fails when any <code>_post(operation=...)</code> call site in <code>linear.py</code> lacks a mock handler.</li>
+        <li><strong>Fault injection</strong> — per-operation, per-call-index fault modes in the mock; scenario covers <code>set_state</code> HTTP 500 halt (pre-spawn, fast). Per-scenario contract enforced (runlog assertions, mock state, call sequence).</li>
+        <li><strong>Pre-spawn halt scenarios</strong> — repo-resolution failures, worktree-add failure, set_state 500. Fast, no claude.</li>
+        <li><strong>Real-claude halt scenarios</strong> — child exits without Done (via <code>--max-turns 1</code>); child non-zero exit (via invalid prompt). Marked <code>real_claude</code>.</li>
+        <li><strong>Breach scenarios</strong> — time-breach first (tight <code>per_issue_seconds</code> plus "wait 60s" prompt — robust). Token-breach gated on the slice-8 reproducibility spike. Both <code>real_claude</code>.</li>
+        <li><strong>Cycle-level halt scenarios</strong> — <code>DependencyCycleError</code> (no claude); cycle-cap breach after two Done issues (<code>real_claude</code>).</li>
+        <li><strong>Resume scenario</strong> — drive a halt, re-invoke orchestrator on the same mock cycle, assert second runlog file and final state. <code>real_claude</code>.</li>
+        <li><strong>Usage-tracking + Linear edge-case scenarios</strong> — usage predicates on a happy-path drain (<code>real_claude</code>); 429 / malformed / slow-timeout halts on the parent (no claude).</li>
+      </ol>
+      <p>Slices 1–4 are the foundation; 5–12 are independent and ship in any order once 4 lands. Each slice opens a Linear issue under the initiative and closes per <code>AGENTS.md</code> (review → fix → commit + push → Linear summary comment → Done).</p>
+    </section>
+
+    <section class="s" id="critical-files">
+      <header><span class="ix">10</span><h2>Critical files</h2></header>
+      <p>To modify:</p>
+      <ul>
+        <li><code>drain_cycle/linear.py</code> — env-var override for GraphQL URL (slice 1)</li>
+        <li><code>drain_cycle/runlog.py</code> — verify <code>HOME</code> re-resolution; add small accessor only if cached at module load (slice 1)</li>
+      </ul>
+      <p>To create:</p>
+      <ul>
+        <li><code>docs/adrs/0001-integration-test-architecture.md</code> — chosen approach + rejected alternatives + revisit conditions (slice 1)</li>
+        <li><code>tests/integration/conftest.py</code> — harness fixture, <code>real_claude</code> marker config</li>
+        <li><code>tests/integration/mock_linear.py</code> — FastAPI GraphQL server + shared in-memory store + fault injection</li>
+        <li><code>tests/integration/linear_mcp_shim.py</code> — stdio MCP server backed by the shared store</li>
+        <li><code>tests/integration/prompts/*.md</code> — issue-body prompts (happy_path, exit_without_done, verbose, wait, etc.)</li>
+        <li><code>tests/integration/test_happy_path.py</code>, <code>test_pre_spawn_halts.py</code>, <code>test_real_claude_halts.py</code>, <code>test_breach.py</code>, <code>test_cycle_halts.py</code>, <code>test_resume.py</code>, <code>test_usage_tracking.py</code>, <code>test_linear_edges.py</code>, <code>test_linear_surface_audit.py</code>, <code>test_subprocess_smoke.py</code> — scenarios</li>
+      </ul>
+      <p>To reuse from existing tests:</p>
+      <ul>
+        <li>Real git-repo setup pattern in <code>tests/test_orchestrator_iteration.py:22-90</code></li>
+        <li>Linear fixture style in <code>tests/test_linear_pending_issues.py:65-70</code></li>
+        <li><code>_CLAUDE_CMD</code> patch point at <code>drain_cycle/orchestrator.py:25</code></li>
+      </ul>
+    </section>
+
+    <section class="s" id="verification">
+      <header><span class="ix">11</span><h2>Verification</h2></header>
+      <p>End-to-end:</p>
+      <ul>
+        <li><code>uv run pytest tests/integration/ -v</code> — non-<code>real_claude</code> scenarios green; no real Linear network calls; no real <code>LINEAR_API_KEY</code> leaking in. The default local invocation.</li>
+        <li><code>uv run pytest tests/integration/ -m real_claude -v</code> — full suite green against a real Anthropic API key. Run on demand; instructions live in <code>tests/integration/README.md</code>.</li>
+        <li><code>uv run pytest --cov=drain_cycle/orchestrator --cov=drain_cycle/worker --cov=drain_cycle/runlog tests/integration/</code> — coverage on orchestrator, worker, and runlog rises meaningfully.</li>
+        <li>Each slice closes per <code>AGENTS.md</code>: review → fix → commit + push to main → Linear summary comment → Done.</li>
+      </ul>
+      <p><strong>Halt-coverage assertion</strong> (enforces KR 2):</p>
+      <ul>
+        <li><code>test_halt_coverage</code> greps <code>mark_error</code> slugs from <code>drain_cycle/**.py</code>, collects the union of <code>exception.slug</code> attributes (or <code>halt_reason</code> strings) observed across the full integration run (including <code>real_claude</code>), and asserts equality. Fails locally when a new halt slug lands in production code without a covering scenario.</li>
+      </ul>
+      <p>Negative checks during build:</p>
+      <ul>
+        <li><code>grep -r "api.linear.app" tests/</code> returns nothing — no accidental real-Linear calls in fixtures.</li>
+        <li>The mock's call log (parent GraphQL + child MCP) records every operation a scenario expects; an unexpected call fails the test loudly.</li>
+        <li><code>test_linear_surface_audit</code> fails when any <code>_post(operation=...)</code> call site in <code>linear.py</code> lacks a mock handler.</li>
+        <li>Cost budget guard: the <code>real_claude</code> suite prints total Anthropic spend at the end of each run; manual review flags runs over $5 (catch a runaway loop scenario early).</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>Rendered from <code>docs/integration-test-architecture.md</code> on 2026-05-28 · regenerate to update.</footer>
+</div>
+
+<script>
+  const links = Array.from(document.querySelectorAll('aside nav a'));
+  const targets = links.map(a => document.getElementById(a.getAttribute('href').slice(1))).filter(Boolean);
+  const byId = new Map(targets.map((el, i) => [el.id, links[i]]));
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (e.isIntersecting) {
+        links.forEach(a => a.classList.remove('active'));
+        byId.get(e.target.id)?.classList.add('active');
+      }
+    }
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  targets.forEach(t => io.observe(t));
+</script>
+</body>
+</html>
