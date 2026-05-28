@@ -20,13 +20,32 @@ _TAIL = (
 )
 
 
-def build(issue: dict[str, Any], worktree: Path) -> str:
+def _resume_directive(identifier: str) -> str:
+    """Resume preamble for a worktree carrying prior committed work.
+
+    Inserted as the first line inside the preamble (after the ``---``
+    separator, before "Execution instructions:") so the agent reads it
+    ahead of the procedure but ``_TAIL`` still holds the last-line
+    position the four-segment ordering reserves for it.
+    """
+    return (
+        f"Resuming issue {identifier}: this worktree carries prior committed "
+        "work from an earlier session that was halted. Run "
+        "`git log --oneline main..HEAD` and `git status` first to read what "
+        "is already done, then continue from that point — do not restart "
+        "from scratch.\n\n"
+    )
+
+
+def build(issue: dict[str, Any], worktree: Path, *, resumed: bool = False) -> str:
     title = issue.get("title", "")
     description = issue.get("description") or ""
     identifier = issue.get("identifier", "")
 
+    resume_segment = _resume_directive(identifier) if resumed else ""
     preamble = (
         "---\n\n"
+        f"{resume_segment}"
         "Execution instructions:\n"
         f"- Working directory: {worktree}\n"
         "- Base branch: main\n"
