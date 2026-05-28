@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "55ec74d83384",
+  "session_id": "e3453eb4-1dd7-4bd0-b6b9-8d80b84b89f1",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-28T04:39:50.82068Z",
+  "branch": "feat-orchestrator-resume-wiring",
+  "checkpoints_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "69058c477e18",
+  "token_usage": {
+    "input_tokens": 18027,
+    "cache_creation_tokens": 444389,
+    "cache_read_tokens": 2562313,
+    "output_tokens": 92035,
+    "api_call_count": 25
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 513,
+      "user_lines_removed": 5,
+      "agent_lines_added": 160,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "README.md": 4,
+        "docs/design-decisions.md": 26,
+        "docs/limits.example.yml": 7,
+        "drain_cycle/orchestrator.py": 63,
+        "tests/test_orchestrator_resume.py": 413
+      },
+      "user_removed_per_file": {
+        "README.md": 1,
+        "docs/design-decisions.md": 2,
+        "drain_cycle/orchestrator.py": 2
+      }
+    }
+  ]
+}

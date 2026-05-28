@@ -3,7 +3,7 @@
   "checkpoint_id": "55ec74d83384",
   "strategy": "manual-commit",
   "branch": "feat-orchestrator-resume-wiring",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "README.md",
     "docs/design-decisions.md",
@@ -17,13 +17,19 @@
       "transcript": "/55/ec74d83384/0/full.jsonl",
       "content_hash": "/55/ec74d83384/0/content_hash.txt",
       "prompt": "/55/ec74d83384/0/prompt.txt"
+    },
+    {
+      "metadata": "/55/ec74d83384/1/metadata.json",
+      "transcript": "/55/ec74d83384/1/full.jsonl",
+      "content_hash": "/55/ec74d83384/1/content_hash.txt",
+      "prompt": "/55/ec74d83384/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 193,
-    "cache_creation_tokens": 535401,
-    "cache_read_tokens": 20575618,
-    "output_tokens": 92007,
-    "api_call_count": 148
+    "input_tokens": 18220,
+    "cache_creation_tokens": 979790,
+    "cache_read_tokens": 23137931,
+    "output_tokens": 184042,
+    "api_call_count": 173
   }
 }
