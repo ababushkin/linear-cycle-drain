@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "e51a4640ea8d",
+  "session_id": "d2dda828-0c38-47ba-a4ef-5f6a4a2d55f3",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-28T02:35:17.702357Z",
+  "branch": "feat-worktree-ensure",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "drain_cycle/worktree.py",
+    "tests/test_worktree.py"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "7561f0534406",
+  "token_usage": {
+    "input_tokens": 72,
+    "cache_creation_tokens": 263747,
+    "cache_read_tokens": 6622790,
+    "output_tokens": 15248,
+    "api_call_count": 52
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-28T02:35:17.662324Z",
+    "agent_lines": 214,
+    "agent_removed": 1,
+    "human_added": 8,
+    "human_modified": 19,
+    "human_removed": 0,
+    "total_committed": 241,
+    "total_lines_changed": 242,
+    "agent_percentage": 88.84297520661157,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

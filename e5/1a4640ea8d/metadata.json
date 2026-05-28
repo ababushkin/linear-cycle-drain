@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "e51a4640ea8d",
+  "strategy": "manual-commit",
+  "branch": "feat-worktree-ensure",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "drain_cycle/worktree.py",
+    "tests/test_worktree.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e5/1a4640ea8d/0/metadata.json",
+      "transcript": "/e5/1a4640ea8d/0/full.jsonl",
+      "content_hash": "/e5/1a4640ea8d/0/content_hash.txt",
+      "prompt": "/e5/1a4640ea8d/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 72,
+    "cache_creation_tokens": 263747,
+    "cache_read_tokens": 6622790,
+    "output_tokens": 15248,
+    "api_call_count": 52
+  }
+}
