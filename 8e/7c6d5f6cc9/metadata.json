@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "8e7c6d5f6cc9",
+  "strategy": "manual-commit",
+  "branch": "feat-limits-resume-attempts",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "drain_cycle/limits.py",
+    "tests/test_limits.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/8e/7c6d5f6cc9/0/metadata.json",
+      "transcript": "/8e/7c6d5f6cc9/0/full.jsonl",
+      "content_hash": "/8e/7c6d5f6cc9/0/content_hash.txt",
+      "prompt": "/8e/7c6d5f6cc9/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 130,
+    "cache_creation_tokens": 349106,
+    "cache_read_tokens": 12626716,
+    "output_tokens": 33318,
+    "api_call_count": 95
+  }
+}
