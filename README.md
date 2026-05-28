@@ -165,6 +165,8 @@ $ echo $?
 
 After the run, one JSON log per invocation is at `~/.drain-cycle/runs/<cycle-id>-<run-timestamp>.json`. On halt, the worktree at `<target-repo>/.worktrees/<issue-identifier>/` is preserved for inspection; on success it's removed.
 
+Re-run `drain-cycle` against the same cycle to resume a halted issue. The orchestrator reuses the preserved worktree and tells the spawned agent to read the committed work before continuing. After `max_resume_attempts` resumes (default `3`: one fresh attempt plus three resumes), it refuses to spawn for that issue and writes a cap-halt entry. Set `max_resume_attempts: null` in [Limits](#limits) to disable the cap.
+
 ## Recommended companion skills
 
 Spawned sessions use whatever skills you've installed globally. The pairing it was designed for:
@@ -188,9 +190,10 @@ Defaults are baked in — **per-issue 8M tokens · 20 min · $15; cycle 30M toke
 ```yaml
 per_issue_tokens: 4000000   # tighten the per-issue token cap
 cycle_cost_usd: null        # disable the cycle cost cap entirely
+max_resume_attempts: 5      # allow more resumes for a flaky issue
 ```
 
-A key you omit keeps its default; a number overrides it; `null` turns that guardrail off. Each value must be a positive number or `null` — a malformed file halts startup rather than silently reverting to defaults. See [`docs/limits.example.yml`](docs/limits.example.yml) for the full annotated template. The defaults are deliberately generous starting points; recalibrate against your real run-log spend.
+A key you omit keeps its default; a number overrides it; `null` turns that guardrail off. Each value must be a positive number or `null` — a malformed file halts startup rather than silently reverting to defaults. `max_resume_attempts` is integer-only (the count of times the orchestrator will respawn a halted issue across re-runs); see [`docs/design-decisions.md`](docs/design-decisions.md) §14. See [`docs/limits.example.yml`](docs/limits.example.yml) for the full annotated template. The defaults are deliberately generous starting points; recalibrate against your real run-log spend.
 
 ## Logs & grading
 
