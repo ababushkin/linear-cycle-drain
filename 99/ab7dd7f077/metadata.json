@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.6.2",
+  "checkpoint_id": "99ab7dd7f077",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "docs/integration-test-architecture.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/99/ab7dd7f077/0/metadata.json",
+      "transcript": "/99/ab7dd7f077/0/full.jsonl",
+      "content_hash": "/99/ab7dd7f077/0/content_hash.txt",
+      "prompt": "/99/ab7dd7f077/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 18130,
+    "cache_creation_tokens": 859275,
+    "cache_read_tokens": 13647441,
+    "output_tokens": 159311,
+    "api_call_count": 94
+  }
+}
