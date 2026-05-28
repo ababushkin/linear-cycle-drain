@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,41 @@ rather than a misleading fake path."""
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _open_watch_pane(watch_log: Path) -> str | None:
+    """Open a tmux split-pane tailing ``watch_log``; return the pane ID or None.
+
+    Failures (tmux not on PATH, non-zero exit, any OS error) are swallowed so
+    a broken tmux environment never crashes the drain run.
+    """
+    try:
+        subprocess.run(
+            ["tmux", "split-window", "-d", f"tail -f {watch_log}"],
+            check=True,
+            capture_output=True,
+        )
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "#{pane_id}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return None
+
+
+def _close_watch_pane(pane_id: str) -> None:
+    """Kill a tmux pane by ID; swallows all errors."""
+    try:
+        subprocess.run(
+            ["tmux", "kill-pane", "-t", pane_id],
+            check=False,
+            capture_output=True,
+        )
+    except Exception:
+        pass
 
 
 def _halt_message(identifier: str, state_name: str, worktree_path: Path) -> str:
@@ -149,7 +185,7 @@ def _debug_enabled() -> bool:
     return bool(os.environ.get(_DEBUG_ENV_VAR))
 
 
-def run(repos: Repos, limits: Limits | None = None) -> int:
+def run(repos: Repos, limits: Limits | None = None, *, watch: bool = False) -> int:
     """Drain the current cycle inside the ``drain.cycle`` root span.
 
     The span wrapper is thin so the body keeps its shape; per-issue work nests
@@ -159,10 +195,10 @@ def run(repos: Repos, limits: Limits | None = None) -> int:
     if limits is None:
         limits = Limits()
     with telemetry.tracer.start_as_current_span("drain.cycle") as cycle_span:
-        return _run(repos, limits, cycle_span)
+        return _run(repos, limits, cycle_span, watch=watch)
 
 
-def _run(repos: Repos, limits: Limits, cycle_span: Span) -> int:
+def _run(repos: Repos, limits: Limits, cycle_span: Span, *, watch: bool = False) -> int:
     debug = _debug_enabled()
     cycle_id = linear.current_cycle_id()
     cycle_span.set_attribute("drain.cycle_id", cycle_id)
@@ -198,9 +234,17 @@ def _run(repos: Repos, limits: Limits, cycle_span: Span) -> int:
         cycle_span.set_attribute("drain.outcome", "all-deferred")
         return 0
 
+    in_tmux = bool(os.environ.get("TMUX"))
+    current_pane_id: str | None = None
+
     total = len(plan.order)
     for index, issue in enumerate(plan.order):
-        halt_code = _drain_one_issue(
+        # Kill the pane from the previous issue before opening one for this issue.
+        if current_pane_id is not None:
+            _close_watch_pane(current_pane_id)
+            current_pane_id = None
+
+        halt_code, current_pane_id = _drain_one_issue(
             issue,
             index=index,
             total=total,
@@ -209,9 +253,11 @@ def _run(repos: Repos, limits: Limits, cycle_span: Span) -> int:
             log=log,
             cycle_id=cycle_id,
             debug=debug,
+            watch=watch,
+            in_tmux=in_tmux,
         )
         if halt_code is not None:
-            return halt_code
+            return halt_code  # type: ignore[return-value]
 
         # Cycle-wide circuit breaker: every issue may stay under its own
         # per-issue caps while their sum drains the quota. Check the
@@ -230,6 +276,7 @@ def _run(repos: Repos, limits: Limits, cycle_span: Span) -> int:
             print(halt_reason, file=sys.stderr)
             return 1
 
+    # Final pane is left open for scrollback (intentionally not killed here).
     cycle_span.set_attribute("drain.outcome", "drained")
     return 0
 
@@ -244,13 +291,15 @@ def _drain_one_issue(
     log: runlog.RunLog,
     cycle_id: str,
     debug: bool,
-) -> int | None:
+    watch: bool = False,
+    in_tmux: bool = False,
+) -> tuple[int | None, str | None]:
     """Drain a single issue end to end inside a ``drain.issue`` span.
 
-    Returns ``None`` when the issue reached Done (the caller then runs the
-    cycle-wide circuit breaker and proceeds to the next issue), or an exit
-    code when the run must halt: repo-resolution failure, pre-spawn setup
-    failure, a per-issue cap breach, or a session that finished not-Done.
+    Returns ``(halt_code, pane_id)`` where ``halt_code`` is ``None`` when the
+    issue reached Done (the caller then runs the cycle-wide circuit breaker and
+    proceeds to the next issue), or an exit code when the run must halt.
+    ``pane_id`` is the tmux pane ID opened for this issue (or ``None``).
     Each halt path is also marked on the span with a static ``exception.slug``.
     """
     identifier = issue["identifier"]
@@ -285,7 +334,7 @@ def _drain_one_issue(
             issue_span.set_attribute("issue.final_linear_state", state_name)
             telemetry.mark_error(issue_span, "err-repo-resolution", halt_reason)
             print(halt_reason, file=sys.stderr)
-            return 1
+            return 1, None
 
         issue_span.set_attribute("issue.repo", target_repo.name)
 
@@ -327,7 +376,7 @@ def _drain_one_issue(
                 issue_span.set_attribute("issue.resumed", True)
                 telemetry.mark_error(issue_span, "err-resume-cap", halt_reason)
                 print(halt_reason, file=sys.stderr)
-                return 1
+                return 1, None
 
         try:
             handle = worktree.ensure(target_repo, identifier)
@@ -366,7 +415,7 @@ def _drain_one_issue(
             issue_span.set_attribute("issue.final_linear_state", state_name)
             telemetry.mark_error(issue_span, "err-setup-failed", halt_reason)
             print(halt_reason, file=sys.stderr)
-            return 1
+            return 1, None
 
         agent_prompt = prompt.build(issue, worktree_path, resumed=handle.resumed)
         issue_span.set_attribute("issue.resumed", handle.resumed)
@@ -379,6 +428,12 @@ def _drain_one_issue(
                 f"drain-cycle: {identifier} debug capture → {debug_file}",
                 file=sys.stderr,
             )
+
+        watch_log_path = log.watch_path(identifier) if watch else None
+        pane_id: str | None = None
+        if watch_log_path is not None and in_tmux:
+            watch_log_path.touch()
+            pane_id = _open_watch_pane(watch_log_path)
 
         marker: dict = {
             "pid": os.getpid(),
@@ -437,6 +492,7 @@ def _drain_one_issue(
                 time_limit_seconds=limits.per_issue_seconds,
                 cost_limit_usd=limits.per_issue_cost_usd,
                 debug_file=debug_file,
+                watch_log=watch_log_path,
                 on_progress=_make_on_progress(marker, identifier),
             )
         finally:
@@ -476,7 +532,7 @@ def _drain_one_issue(
             issue_span.set_attribute("issue.final_linear_state", effective_state)
             telemetry.mark_error(issue_span, "err-per-issue-breach", halt_reason)
             print(halt_reason, file=sys.stderr)
-            return 1
+            return 1, pane_id
 
         refreshed = linear.get_issue(issue["id"])
         post_spawn_state = refreshed["state"]["name"]
@@ -509,7 +565,7 @@ def _drain_one_issue(
             )
             if remove_error is None:
                 print(f"drain-cycle: {identifier} done; worktree removed.", file=sys.stderr)
-            return None
+            return None, pane_id
 
         # Not-Done halt: revert to the pre-halt state so a re-run picks
         # this issue back up instead of silently skipping it.
@@ -539,4 +595,4 @@ def _drain_one_issue(
         issue_span.set_attribute("issue.final_linear_state", effective_state)
         telemetry.mark_error(issue_span, "err-issue-not-done", halt_reason)
         print(halt_reason, file=sys.stderr)
-        return 1
+        return 1, pane_id
