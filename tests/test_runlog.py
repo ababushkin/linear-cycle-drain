@@ -180,6 +180,21 @@ def test_debug_path_sits_beside_run_log_named_per_issue(
     assert log.debug_path("ABA-1") != log.debug_path("ABA-2")
 
 
+def test_watch_path_sits_beside_run_log_named_per_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    log = runlog.RunLog(cycle_id="stub-cycle")
+    watch = log.watch_path("ABA-338")
+
+    assert watch.parent == log.path.parent
+    assert watch.name == f"{log.path.stem}-ABA-338.watch.log"
+    assert log.watch_path("ABA-1") != log.watch_path("ABA-2")
+    # Distinct from the debug path for the same issue.
+    assert log.watch_path("ABA-1") != log.debug_path("ABA-1")
+
+
 def test_two_runlogs_same_cycle_id_write_to_distinct_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

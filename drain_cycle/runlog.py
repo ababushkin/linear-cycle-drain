@@ -198,6 +198,15 @@ class RunLog:
         """
         return self.path.with_name(f"{self.path.stem}-{issue_identifier}.debug.log")
 
+    def watch_path(self, issue_identifier: str) -> Path:
+        """Path for one issue's watch log, beside the run log.
+
+        Named ``<run-log-stem>-<issue-identifier>.watch.log`` so each issue's
+        activity log sits next to the run log it belongs to. Written when
+        ``--watch`` is active; see ``orchestrator.run`` and ``cli.py``.
+        """
+        return self.path.with_name(f"{self.path.stem}-{issue_identifier}.watch.log")
+
     def set_cycle_halt(self, reason: str) -> None:
         """Record why a cycle-wide cap stopped the run, and persist.
 
