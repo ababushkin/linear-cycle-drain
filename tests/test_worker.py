@@ -376,3 +376,178 @@ def test_run_issue_omits_debug_file_when_none(tmp_path: Path) -> None:
 
     argv = argv_file.read_text().splitlines()
     assert "--debug-file" not in argv
+
+
+# ---------------------------------------------------------------------------
+# Watch log tests
+# ---------------------------------------------------------------------------
+
+def _assistant_with_content(message_id: str, content: list, *, inp: int = 1, out: int = 1) -> str:
+    return json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "id": message_id,
+                "content": content,
+                "usage": {
+                    "input_tokens": inp,
+                    "output_tokens": out,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        }
+    )
+
+
+def _user_tool_result(tool_use_id: str, content_text: str) -> str:
+    return json.dumps(
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": [{"type": "text", "text": content_text}],
+                    }
+                ]
+            },
+        }
+    )
+
+
+def test_watch_log_written_for_text_and_tool_use_and_tool_result(tmp_path: Path) -> None:
+    """Watch log captures assistant prose, tool call lines, tool result sizes,
+    and the done footer from the result event."""
+    watch_log = tmp_path / "run.watch.log"
+    lines = [
+        _assistant_with_content(
+            "msg_a",
+            [{"type": "text", "text": "I will read the file."}],
+        ),
+        _assistant_with_content(
+            "msg_a",  # same id — second content block in same turn
+            [{"type": "tool_use", "id": "toolu_1", "name": "Read", "input": {"file_path": "/foo.py"}}],
+        ),
+        _user_tool_result("toolu_1", "x" * 500),
+        _assistant_with_content(
+            "msg_b",
+            [{"type": "text", "text": "Done."}],
+            inp=5, out=2,
+        ),
+        _result(total_cost_usd=0.05, num_turns=2, session_id="s1", is_error=False),
+    ]
+    script = _fake_claude_streaming(tmp_path, lines)
+
+    worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="ignored",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=30.0,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+        watch_log=watch_log,
+    )
+
+    log_text = watch_log.read_text()
+
+    # Turn 1 header appears once (deduped by message_id).
+    assert log_text.count("=== Turn 1") == 1
+    # Assistant prose.
+    assert "I will read the file." in log_text
+    # Tool call line.
+    assert "→ Read(" in log_text
+    assert "file_path" in log_text
+    # Tool result size (500 chars of "x").
+    assert "← 500 chars" in log_text
+    # Turn 2 header.
+    assert "=== Turn 2" in log_text
+    assert "Done." in log_text
+    # Footer.
+    assert "=== done: 2 turns" in log_text
+    assert "$0.05" in log_text
+
+
+def test_watch_log_unknown_content_types_silently_skipped(tmp_path: Path) -> None:
+    """Unknown content block types (e.g. thinking) are skipped — no crash,
+    no spurious output."""
+    watch_log = tmp_path / "run.watch.log"
+    lines = [
+        _assistant_with_content(
+            "msg_a",
+            [
+                {"type": "thinking", "thinking": "Let me think..."},
+                {"type": "text", "text": "Result."},
+            ],
+        ),
+        _result(total_cost_usd=0.01, num_turns=1, session_id="s2", is_error=False),
+    ]
+    script = _fake_claude_streaming(tmp_path, lines)
+
+    worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="ignored",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=30.0,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+        watch_log=watch_log,
+    )
+
+    log_text = watch_log.read_text()
+    assert "Result." in log_text
+    # thinking block content must not appear
+    assert "Let me think" not in log_text
+
+
+def test_watch_log_file_touched_before_session(tmp_path: Path) -> None:
+    """The watch log file exists on disk before the worker subprocess runs,
+    so ``tail -f`` can open it immediately (macOS tail -f requirement)."""
+    watch_log = tmp_path / "run.watch.log"
+    # Use an argv-capturing script that exits immediately.
+    argv_file = tmp_path / "argv.txt"
+    script = _argv_capturing_claude(tmp_path, argv_file)
+
+    assert not watch_log.exists()
+
+    worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="ignored",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=None,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+        watch_log=watch_log,
+    )
+
+    assert watch_log.exists()
+
+
+def test_watch_log_none_does_not_crash(tmp_path: Path) -> None:
+    """Omitting watch_log (default None) is the existing no-watch path;
+    must not crash."""
+    lines = [
+        _assistant("msg_a", inp=1, out=1, cc=0, cr=0),
+        _result(total_cost_usd=0.01, num_turns=1, session_id="s3", is_error=False),
+    ]
+    script = _fake_claude_streaming(tmp_path, lines)
+
+    result = worker.run_issue(
+        claude_cmd=[str(script)],
+        model="claude-sonnet-4-6",
+        prompt="ignored",
+        cwd=tmp_path,
+        token_limit=None,
+        time_limit_seconds=30.0,
+        cost_limit_usd=None,
+        passthrough=io.StringIO(),
+    )
+
+    assert result.breach is None

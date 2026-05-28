@@ -60,6 +60,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
@@ -132,6 +133,7 @@ def run_issue(
     cost_limit_usd: float | None,
     passthrough: TextIO | None = None,
     debug_file: Path | None = None,
+    watch_log: Path | None = None,
     poll_interval_seconds: float = _POLL_INTERVAL_SECONDS,
     on_progress: Callable[[int, int, int, float | None, float], None] | None = None,
 ) -> WorkerResult:
@@ -177,6 +179,11 @@ def run_issue(
         sink = passthrough if passthrough is not None else sys.stderr
         accumulator = _UsageAccumulator()
 
+        watch_writer: _WatchWriter | None = None
+        if watch_log is not None:
+            watch_log.touch()
+            watch_writer = _WatchWriter(watch_log)
+
         started = time.monotonic()
         proc = subprocess.Popen(
             argv,
@@ -197,7 +204,7 @@ def run_issue(
 
         reader = threading.Thread(
             target=_drain_stream,
-            args=(proc.stdout, accumulator, sink, _progress_cb),
+            args=(proc.stdout, accumulator, sink, _progress_cb, watch_writer),
             daemon=True,
         )
         reader.start()
@@ -322,6 +329,7 @@ def _drain_stream(
     accumulator: _UsageAccumulator,
     sink: TextIO,
     on_progress: Callable[[int, int, int, float | None], None] | None = None,
+    watch_writer: "_WatchWriter | None" = None,
 ) -> None:
     """Read the worker's merged output line by line until EOF.
 
@@ -329,7 +337,8 @@ def _drain_stream(
     else (non-JSON diagnostics, JSON that isn't an object) is echoed to
     ``sink`` so the operator keeps the visibility a captured pipe would
     otherwise hide. ``on_progress`` is called once per new turn (deduplicated
-    by message id) with a live usage snapshot.
+    by message id) with a live usage snapshot. ``watch_writer``, when set,
+    receives each event for human-readable watch log output.
     """
     if stream is None:
         return
@@ -346,12 +355,14 @@ def _drain_stream(
                 continue
             if isinstance(event, dict):
                 accumulator.feed(event)
-                if on_progress is not None and event.get("type") == "assistant":
+                if event.get("type") == "assistant":
                     mid = (event.get("message") or {}).get("id")
-                    if mid != last_message_id:
+                    if on_progress is not None and mid != last_message_id:
                         last_message_id = mid
                         snap = accumulator.live_snapshot()
                         on_progress(*snap)
+                if watch_writer is not None:
+                    watch_writer.feed(event)
             else:
                 _echo(sink, line)
     finally:
@@ -366,6 +377,107 @@ def _echo(sink: TextIO, line: str) -> None:
         print(line, file=sink)
     except (OSError, ValueError):
         pass
+
+
+_WATCH_INPUT_MAX = 80
+
+
+class _WatchWriter:
+    """Write a human-readable activity log from stream-json events.
+
+    Called from the reader thread on every event; writes to a line-buffered
+    file so ``tail -f`` sees output immediately. Turn headers are deduped by
+    ``message.id`` — the same message is emitted once per content block, and
+    we want one header per logical turn.
+
+    Content block handling:
+    - ``text`` → assistant prose written as-is
+    - ``tool_use`` → ``→ Name(key=val, ...)`` with truncated input
+    - ``tool_result`` (in ``user`` events) → ``← N chars``
+    - unknown block types → silently skipped (forward-compat)
+    ``result`` events → ``=== done: N turns, $X.XX ===`` footer.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._file = path.open("a", buffering=1, encoding="utf-8")
+        self._turn = 0
+        self._last_message_id: str | None = None
+
+    def feed(self, event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        if event_type == "assistant":
+            self._feed_assistant(event)
+        elif event_type == "user":
+            self._feed_user(event)
+        elif event_type == "result":
+            self._feed_result(event)
+
+    def _feed_assistant(self, event: dict[str, Any]) -> None:
+        message = event.get("message")
+        if not isinstance(message, dict):
+            return
+        mid = message.get("id")
+        if mid != self._last_message_id:
+            self._last_message_id = mid
+            self._turn += 1
+            ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._write(f"\n=== Turn {self._turn} [{ts}] ===")
+        content = message.get("content")
+        if not isinstance(content, list):
+            return
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "text":
+                text = block.get("text", "")
+                if text:
+                    self._write(text)
+            elif btype == "tool_use":
+                name = block.get("name", "?")
+                inp = block.get("input") or {}
+                args = ", ".join(
+                    f"{k}={repr(v)}"[:_WATCH_INPUT_MAX]
+                    for k, v in (inp.items() if isinstance(inp, dict) else [])
+                )
+                self._write(f"→ {name}({args})")
+
+    def _feed_user(self, event: dict[str, Any]) -> None:
+        message = event.get("message")
+        if not isinstance(message, dict):
+            return
+        content = message.get("content")
+        if not isinstance(content, list):
+            return
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_result":
+                result_content = block.get("content") or []
+                size = sum(
+                    len(str(c.get("text", "")))
+                    for c in result_content
+                    if isinstance(c, dict)
+                )
+                self._write(f"← {size} chars")
+
+    def _feed_result(self, event: dict[str, Any]) -> None:
+        turns = event.get("num_turns")
+        cost = event.get("total_cost_usd")
+        if cost is not None:
+            self._write(f"\n=== done: {turns} turns, ${cost:.2f} ===")
+        else:
+            self._write(f"\n=== done: {turns} turns ===")
+        try:
+            self._file.close()
+        except OSError:
+            pass
+
+    def _write(self, text: str) -> None:
+        try:
+            print(text, file=self._file)
+        except (OSError, ValueError):
+            pass
 
 
 def _coerce_int(value: Any) -> int:
