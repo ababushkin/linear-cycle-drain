@@ -125,26 +125,12 @@ def test_fmt_elapsed(seconds: float, expected: str) -> None:
     assert progress.fmt_elapsed(seconds) == expected
 
 
-def test_format_progress_line_with_cost() -> None:
+def test_format_progress_line() -> None:
     line = progress.format_progress_line(
         "ABA-205",
         turns=42,
         cumulative_tokens=8_100_000,
         peak_context_tokens=180_000,
-        cost_usd=12.30,
         elapsed_seconds=840,
     )
-    assert line == "ABA-205 · turn 42 · 8.1M tok (peak 180k) · $12.30 · 14m"
-
-
-def test_format_progress_line_without_cost() -> None:
-    line = progress.format_progress_line(
-        "ABA-1",
-        turns=1,
-        cumulative_tokens=500,
-        peak_context_tokens=200,
-        cost_usd=None,
-        elapsed_seconds=5,
-    )
-    assert "$?.??" in line
-    assert "ABA-1 · turn 1" in line
+    assert line == "ABA-205 · turn 42 · 8.1M tok (peak 180k) · 14m"

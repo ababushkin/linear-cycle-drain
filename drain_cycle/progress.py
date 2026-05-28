@@ -106,16 +106,14 @@ def format_progress_line(
     turns: int,
     cumulative_tokens: int,
     peak_context_tokens: int,
-    cost_usd: float | None,
     elapsed_seconds: float,
 ) -> str:
     """Compact single-line progress for stderr.
 
-    Example: ``ABA-205 · turn 42 · 8.1M tok (peak 180k) · $12.30 · 14m``
+    Example: ``ABA-205 · turn 42 · 8.1M tok (peak 180k) · 14m``
     """
-    cost = f"${cost_usd:,.2f}" if cost_usd is not None else "$?.??"
     return (
         f"{identifier} · turn {turns}"
         f" · {fmt_tokens(cumulative_tokens)} tok (peak {fmt_tokens(peak_context_tokens)})"
-        f" · {cost} · {fmt_elapsed(elapsed_seconds)}"
+        f" · {fmt_elapsed(elapsed_seconds)}"
     )

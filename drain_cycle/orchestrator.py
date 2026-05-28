@@ -421,7 +421,6 @@ def _drain_one_issue(
                         turns,
                         cumulative_tokens,
                         peak_context_tokens,
-                        cost_usd,
                         elapsed_seconds,
                     ),
                     file=sys.stderr,
