@@ -1,0 +1,39 @@
+Work on Linear issue ABA-339:
+
+<issue identifier="ABA-339">
+<title>Fix watch mode — run claude directly in tmux pane</title>
+<description>
+## What
+
+When `drain-cycle` runs with `--watch`, open a tmux pane that runs the claude session directly, instead of tailing a log file.
+
+## Why
+
+The current `--watch` implementation was built incorrectly. It opens a tmux pane that runs `tail -f` on an intermediate log file produced by an internal formatter. This means the operator sees a processed, filtered view of activity rather than the actual claude process. The intended behavior is for the watch pane to *be* the claude session — operators should see claude working in real time, not a secondhand summary.
+
+## Acceptance Criteria
+
+1. Running `drain-cycle --watch` opens a tmux split pane per issue that shows the live output of the `claude` process (stream-json events scrolling) rather than a `tail -f` of a log file.
+2. drain-cycle still parses the stream-json output in the background for usage tracking, cost accounting, and breach detection — with the same fidelity as today.
+3. If tmux is not available or pane creation fails, drain-cycle falls back to normal (non-watch) subprocess execution without crashing.
+4. Pane lifecycle is preserved: the previous issue's pane is closed when the next issue starts; the final issue's pane is left open for scrollback.
+5. The intermediate watch log file and the `_WatchWriter` formatter are removed — no unused artifacts remain.
+6. All existing tests pass; watch-mode tests are updated to reflect the new behaviour.
+
+## How
+
+**Mechanism:** Replace the `tail -f <watch.log>` pane command with the full `claude -p ...` invocation piped through `tee <fifo>`. A named pipe (FIFO) connects the pane's claude process to drain-cycle's stream-json reader, which opens the FIFO instead of a subprocess pipe. The pane's terminal receives the tee'd output (stream-json scrolling); drain-cycle's reader thread processes the same bytes from the FIFO.
+
+**Key changes:**
+
+* `orchestrator._open_watch_pane`: accepts `(argv, cwd)` instead of a log-file path; creates a FIFO, runs `claude ... | tee <fifo>` in the split pane, returns `(pane_id, fifo_path)`.
+* `orchestrator._drain_one_issue`: opens the FIFO with a 10-second startup timeout (non-blocking select); passes the file object and a `kill_fn` to the worker instead of a watch log path; falls back to the normal subprocess path on timeout.
+* `worker.run_issue`: gains `external_stream` and `kill_fn` parameters; when `external_stream` is set, skips `subprocess.Popen` and reads from the stream directly; breach kills call `kill_fn()` instead of `kill_process_group`.
+* `worker._WatchWriter` and `runlog.watch_path()` are deleted.
+* Tests in `test_orchestrator_watch.py` updated to assert the new pane command shape and worker call signature.
+</description>
+<team name="Personal"/>
+<label>model › opus</label>
+<label>repo › drain-cycle</label>
+<project name="Autonomous cycle drain - eliminate manual shepherding">A CLI that drains a Linear cycle by spawning fresh Claude Code sessions per issue — frees operator time for scoping and validation.</project>
+</issue>
