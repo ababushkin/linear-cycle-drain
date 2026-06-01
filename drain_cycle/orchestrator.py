@@ -8,13 +8,18 @@ halt string — emitted both on stderr and into the run-log entry's
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import select
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable, TextIO
 
 from opentelemetry.trace import Span
 
@@ -43,29 +48,92 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _open_watch_pane(watch_log: Path) -> str | None:
-    """Open a tmux split-pane tailing ``watch_log``; return the new pane's ID or None.
+_WATCH_FIFO_TIMEOUT_SECONDS = 10.0
+"""How long ``_open_fifo_stream`` waits for the pane's ``claude | tee`` to
+produce its first bytes before giving up and falling back to a normal
+subprocess spawn. The pane's ``claude`` emits its init event within seconds;
+this bound only guards a pane that never started (tmux accepted the
+split-window but the command died), so the drain never wedges on a dead FIFO."""
 
-    ``split-window -P -F "#{pane_id}"`` prints the new pane's ID directly so
-    we capture the tail pane, not the operator's active pane (what
-    ``display-message`` without ``-t`` would return). Failures (tmux not on
-    PATH, non-zero exit, any OS error) are swallowed so a broken tmux
-    environment never crashes the drain run.
+
+def _open_watch_pane(argv: list[str], cwd: Path) -> tuple[str, Path] | None:
+    """Open a tmux split-pane running ``argv`` piped through ``tee`` into a FIFO.
+
+    The pane *is* the ``claude`` session: ``argv | tee <fifo>`` lets the
+    operator watch the live stream-json scroll in the pane while the same
+    bytes flow through the FIFO to drain-cycle's reader. ``exec ${SHELL}``
+    after the pipeline keeps the pane alive for scrollback once ``claude``
+    exits (``tee`` still closes the FIFO write end, so the reader reaches EOF).
+
+    ``split-window -P -F "#{pane_id}"`` prints the new pane's ID directly so we
+    capture the session pane, not the operator's active pane; ``-c`` runs it in
+    the issue's worktree. Returns ``(pane_id, fifo_path)``, or ``None`` if the
+    FIFO or pane could not be created — every failure (tmux not on PATH,
+    non-zero exit, any OS error) is swallowed so a broken tmux environment
+    falls back to a normal spawn rather than crashing the drain.
     """
+    try:
+        fifo_path = Path(tempfile.mkdtemp(prefix="drain-watch-")) / "stream.fifo"
+        os.mkfifo(fifo_path)
+    except OSError:
+        return None
+    pipeline = (
+        " ".join(shlex.quote(a) for a in argv)
+        + f" | tee {shlex.quote(str(fifo_path))}"
+        + "; exec ${SHELL:-/bin/sh}"
+    )
     try:
         result = subprocess.run(
             [
                 "tmux", "split-window", "-d",
                 "-P", "-F", "#{pane_id}",
-                f"tail -f {shlex.quote(str(watch_log))}",
+                "-c", str(cwd),
+                pipeline,
             ],
             check=True,
             capture_output=True,
             text=True,
         )
-        return result.stdout.strip()
+        pane_id = result.stdout.strip()
     except Exception:
+        _cleanup_fifo(fifo_path)
         return None
+    if not pane_id:
+        _cleanup_fifo(fifo_path)
+        return None
+    return pane_id, fifo_path
+
+
+def _open_fifo_stream(fifo_path: Path, timeout: float) -> TextIO | None:
+    """Open ``fifo_path`` for reading, waiting up to ``timeout`` for a writer.
+
+    The FIFO is opened non-blocking so a pane that never started can't wedge
+    the drain; ``select`` then waits for the first bytes (``tee`` writing the
+    pane's first stream-json line). Once readable, ``O_NONBLOCK`` is cleared so
+    the reader thread's line iteration blocks normally until EOF. Returns a
+    line-buffered text stream, or ``None`` if no writer/data appeared in time
+    (the caller then tears down the pane and falls back to a normal spawn).
+    """
+    try:
+        fd = os.open(fifo_path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    readable, _, _ = select.select([fd], [], [], timeout)
+    if not readable:
+        os.close(fd)
+        return None
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    try:
+        return os.fdopen(fd, "r", buffering=1)
+    except OSError:
+        os.close(fd)
+        return None
+
+
+def _cleanup_fifo(fifo_path: Path) -> None:
+    """Remove the FIFO and its temp dir; swallows all errors."""
+    shutil.rmtree(fifo_path.parent, ignore_errors=True)
 
 
 def _close_watch_pane(pane_id: str) -> None:
@@ -432,11 +500,41 @@ def _drain_one_issue(
                 file=sys.stderr,
             )
 
-        watch_log_path = log.watch_path(identifier) if watch else None
+        # Watch mode: run claude inside a tmux pane (so the operator sees the
+        # live session) and read its stream-json off a FIFO instead of a
+        # subprocess pipe. If the pane or FIFO can't be brought up, fall back
+        # to a normal subprocess spawn — the pane is a convenience, not a
+        # requirement. ``pane_id`` is returned to the caller for lifecycle
+        # management; ``external_stream``/``kill_fn`` steer the worker onto the
+        # external path.
         pane_id: str | None = None
-        if watch_log_path is not None and in_tmux:
-            watch_log_path.touch()
-            pane_id = _open_watch_pane(watch_log_path)
+        fifo_path: Path | None = None
+        external_stream: TextIO | None = None
+        kill_fn: Callable[[], None] | None = None
+        if watch and in_tmux:
+            argv = worker.build_argv(
+                _CLAUDE_CMD,
+                model=worker_model,
+                prompt=agent_prompt,
+                cost_limit_usd=limits.per_issue_cost_usd,
+                debug_file=debug_file,
+            )
+            opened = _open_watch_pane(argv, worktree_path)
+            if opened is not None:
+                pane_id, fifo_path = opened
+                external_stream = _open_fifo_stream(
+                    fifo_path, _WATCH_FIFO_TIMEOUT_SECONDS
+                )
+                if external_stream is None:
+                    # Pane accepted but produced no output in time — tear it
+                    # down so we don't double-spawn, then fall back.
+                    _close_watch_pane(pane_id)
+                    _cleanup_fifo(fifo_path)
+                    pane_id = None
+                    fifo_path = None
+                else:
+                    def kill_fn() -> None:
+                        _close_watch_pane(pane_id)
 
         marker: dict = {
             "pid": os.getpid(),
@@ -495,11 +593,14 @@ def _drain_one_issue(
                 time_limit_seconds=limits.per_issue_seconds,
                 cost_limit_usd=limits.per_issue_cost_usd,
                 debug_file=debug_file,
-                watch_log=watch_log_path,
+                external_stream=external_stream,
+                kill_fn=kill_fn,
                 on_progress=_make_on_progress(marker, identifier),
             )
         finally:
             progress.clear()
+            if fifo_path is not None:
+                _cleanup_fifo(fifo_path)
         finished_at = _now_iso()
 
         if result.breach is not None:

@@ -1,9 +1,13 @@
 """Spawn a streaming ``claude -p`` worker for one issue and record its usage.
 
 The orchestrator owns the cycle loop and the Linear lifecycle; this module
-owns one spawned session: how it is launched, how its token usage is
-parsed off the wire, and how it is force-terminated when it overruns the
-per-issue time cap.
+owns one session: how it is launched, how its token usage is parsed off the
+wire, and how it is force-terminated when it overruns the per-issue time cap.
+Normally the session is a subprocess this module spawns. In watch mode the
+orchestrator instead runs ``claude`` in a tmux pane and hands us an open
+stream of the same stream-json (see ``external_stream`` on ``run_issue``);
+the parser and breach monitor are identical, only the launch and kill
+differ.
 
 **Why stream-json.** A bare ``claude -p`` prints only the final assistant
 text; the run log then records exit code and wall-clock and nothing about
@@ -60,7 +64,6 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
@@ -122,6 +125,37 @@ class WorkerResult:
     is_error: bool | None
 
 
+def build_argv(
+    claude_cmd: list[str],
+    *,
+    model: str,
+    prompt: str,
+    cost_limit_usd: float | None,
+    debug_file: Path | None,
+) -> list[str]:
+    """Assemble the full ``claude -p`` argv for one session.
+
+    ``claude_cmd`` is the base argv (``["claude", "-p",
+    "--dangerously-skip-permissions"]``); the streaming flags, ``--model``,
+    ``--max-budget-usd`` (when ``cost_limit_usd`` is set), ``--debug-file``
+    (when set), and the prompt are appended. The prompt is the trailing
+    positional, so it must follow the value-taking ``--model`` /
+    ``--max-budget-usd`` / ``--debug-file`` options, not sit between an option
+    and its value.
+
+    Both spawn paths share this: the worker's own ``subprocess.Popen`` and the
+    orchestrator's watch pane (which runs this argv under ``tee`` so the same
+    bytes reach the operator's terminal and drain-cycle's reader).
+    """
+    argv = [*claude_cmd, *_STREAM_FLAGS, "--model", model]
+    if cost_limit_usd is not None:
+        argv += ["--max-budget-usd", f"{cost_limit_usd:g}"]
+    if debug_file is not None:
+        argv += ["--debug-file", str(debug_file)]
+    argv.append(prompt)
+    return argv
+
+
 def run_issue(
     *,
     claude_cmd: list[str],
@@ -133,32 +167,42 @@ def run_issue(
     cost_limit_usd: float | None,
     passthrough: TextIO | None = None,
     debug_file: Path | None = None,
-    watch_log: Path | None = None,
     poll_interval_seconds: float = _POLL_INTERVAL_SECONDS,
     on_progress: Callable[[int, int, int, float | None, float], None] | None = None,
+    external_stream: TextIO | None = None,
+    kill_fn: Callable[[], None] | None = None,
 ) -> WorkerResult:
-    """Spawn one streaming ``claude -p`` session and return its usage.
+    """Run one streaming ``claude -p`` session and return its usage.
 
-    ``claude_cmd`` is the base argv (``["claude", "-p",
-    "--dangerously-skip-permissions"]``); the streaming flags, ``--model``,
-    ``--max-budget-usd`` (when ``cost_limit_usd`` is set), and the prompt are
-    appended here. The session runs in its own process group; if its
-    cumulative tokens cross ``token_limit`` or its wall-clock crosses
-    ``time_limit_seconds`` the whole group is killed and the returned
-    ``WorkerResult.breach`` names the cap. A limit passed as ``None`` is not
-    enforced. ``cost_limit_usd`` is enforced by ``claude`` itself, not here.
+    Two execution paths share the same usage parser, breach monitor, and
+    result shape:
 
-    Non-JSON lines on the merged stdout/stderr stream (claude warnings,
-    hook stderr) are written to ``passthrough`` (default ``sys.stderr``) so
-    the operator still sees diagnostics; recognised JSON events are
-    consumed by the usage parser.
+    * **Spawned (default).** ``external_stream is None``: the worker builds
+      the argv (see :func:`build_argv`) and launches ``claude`` in its own
+      process group, reading the merged stdout/stderr pipe. On a token/time
+      breach the whole group is SIGKILLed.
+    * **External (watch mode).** ``external_stream`` is an already-open stream
+      of the session's stream-json — drain-cycle reads it while the *same*
+      bytes scroll in a tmux pane that owns the ``claude`` process. No
+      subprocess is spawned here; on a breach ``kill_fn`` is called to stop
+      the pane's process instead of a process-group kill, and ``exit_code`` is
+      ``0`` (the pane's ``claude`` return code isn't observable from here — the
+      breach and the result event's ``is_error`` carry the real outcome).
+
+    If a token/time cap is crossed the returned ``WorkerResult.breach`` names
+    it; a limit passed as ``None`` is not enforced. ``cost_limit_usd`` is
+    enforced by ``claude`` itself, not here.
+
+    Non-JSON lines on the stream (claude warnings, hook stderr) are written to
+    ``passthrough`` (default ``sys.stderr``) so the operator still sees
+    diagnostics; recognised JSON events are consumed by the usage parser.
 
     ``debug_file``, when set, is passed to ``claude`` as ``--debug-file`` so
     the session writes its startup diagnostics — which settings sources,
-    plugins, MCP servers, and hooks initialised — to that path. Debug logs
-    go to the file, not stderr, so the merged stream the usage parser reads
-    is unaffected. Opt-in only; ``None`` (the default) passes no flag and the
-    session behaves exactly as before. See ``docs/design-decisions.md`` §10.
+    plugins, MCP servers, and hooks initialised — to that path. Opt-in only;
+    ``None`` (the default) passes no flag. See ``docs/design-decisions.md``
+    §10. (Ignored on the external path, where the orchestrator already baked
+    it into the pane's argv.)
 
     ``on_progress``, when set, is called from the reader thread after each
     new assistant turn with ``(turns, cumulative_tokens, peak_context_tokens,
@@ -167,33 +211,31 @@ def run_issue(
     """
     with telemetry.tracer.start_as_current_span("drain.worker.session") as span:
         span.set_attribute("worker.model", model)
-        # The prompt is the trailing positional; it must follow the value-taking
-        # ``--model`` / ``--max-budget-usd`` / ``--debug-file`` options, not sit
-        # between an option and its value.
-        argv = [*claude_cmd, *_STREAM_FLAGS, "--model", model]
-        if cost_limit_usd is not None:
-            argv += ["--max-budget-usd", f"{cost_limit_usd:g}"]
-        if debug_file is not None:
-            argv += ["--debug-file", str(debug_file)]
-        argv.append(prompt)
         sink = passthrough if passthrough is not None else sys.stderr
         accumulator = _UsageAccumulator()
-
-        watch_writer: _WatchWriter | None = None
-        if watch_log is not None:
-            watch_log.touch()
-            watch_writer = _WatchWriter(watch_log)
-
         started = time.monotonic()
-        proc = subprocess.Popen(
-            argv,
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            start_new_session=True,
-        )
+
+        proc: subprocess.Popen[str] | None = None
+        if external_stream is not None:
+            stream: TextIO | None = external_stream
+        else:
+            argv = build_argv(
+                claude_cmd,
+                model=model,
+                prompt=prompt,
+                cost_limit_usd=cost_limit_usd,
+                debug_file=debug_file,
+            )
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+            stream = proc.stdout
 
         # Wrap on_progress to inject elapsed_seconds computed from the start time.
         _progress_cb: Callable[[int, int, int, float | None], None] | None = None
@@ -204,13 +246,28 @@ def run_issue(
 
         reader = threading.Thread(
             target=_drain_stream,
-            args=(proc.stdout, accumulator, sink, _progress_cb, watch_writer),
+            args=(stream, accumulator, sink, _progress_cb),
             daemon=True,
         )
         reader.start()
 
+        # The monitor needs to know when the session has finished. With a
+        # spawned process that's ``proc.wait``; on the external path there is
+        # no process, so completion is the reader reaching EOF on the stream.
+        if proc is not None:
+            def _wait(timeout: float | None) -> bool:
+                try:
+                    proc.wait(timeout=timeout)
+                    return True
+                except subprocess.TimeoutExpired:
+                    return False
+        else:
+            def _wait(timeout: float | None) -> bool:
+                reader.join(timeout=timeout)
+                return not reader.is_alive()
+
         breach = _monitor(
-            proc,
+            _wait,
             accumulator,
             started=started,
             token_limit=token_limit,
@@ -218,16 +275,17 @@ def run_issue(
             poll_interval_seconds=poll_interval_seconds,
         )
         if breach is not None:
-            _kill_process_group(proc)
-            proc.wait()
+            if proc is not None:
+                _kill_process_group(proc)
+                proc.wait()
+            elif kill_fn is not None:
+                kill_fn()
         reader.join(timeout=_READER_JOIN_TIMEOUT_SECONDS)
-        if watch_writer is not None:
-            watch_writer.close()
         duration = time.monotonic() - started
 
         cost_usd, num_turns, session_id, is_error = accumulator.summary()
         result = WorkerResult(
-            exit_code=proc.returncode,
+            exit_code=proc.returncode if proc is not None else 0,
             breach=breach,
             duration_seconds=duration,
             model=model,
@@ -274,7 +332,7 @@ def _annotate_worker_span(span: Span, result: WorkerResult) -> None:
 
 
 def _monitor(
-    proc: subprocess.Popen[str],
+    wait: Callable[[float | None], bool],
     accumulator: _UsageAccumulator,
     *,
     started: float,
@@ -284,21 +342,21 @@ def _monitor(
 ) -> Breach | None:
     """Wait for the session, returning the per-issue cap it breaches (if any).
 
-    With both caps off there is nothing to watch for, so we block on the
-    process directly. Otherwise we wake every ``poll_interval_seconds`` to
-    compare the live cumulative-token tally and elapsed wall-clock against
+    ``wait(timeout)`` blocks up to ``timeout`` seconds (``None`` = until
+    completion) and returns ``True`` once the session has finished — a thin
+    seam over ``proc.wait`` (spawned path) or the reader thread reaching EOF
+    (external path). With both caps off there is nothing to watch for, so we
+    block until completion. Otherwise we wake every ``poll_interval_seconds``
+    to compare the live cumulative-token tally and elapsed wall-clock against
     the caps; the first crossed cap is returned for the caller to kill on.
-    Returns ``None`` when the session exits on its own first.
+    Returns ``None`` when the session finishes on its own first.
     """
     if token_limit is None and time_limit_seconds is None:
-        proc.wait()
+        wait(None)
         return None
     while True:
-        try:
-            proc.wait(timeout=poll_interval_seconds)
+        if wait(poll_interval_seconds):
             return None
-        except subprocess.TimeoutExpired:
-            pass
         if token_limit is not None:
             observed = accumulator.cumulative()
             if observed >= token_limit:
@@ -331,16 +389,15 @@ def _drain_stream(
     accumulator: _UsageAccumulator,
     sink: TextIO,
     on_progress: Callable[[int, int, int, float | None], None] | None = None,
-    watch_writer: "_WatchWriter | None" = None,
 ) -> None:
-    """Read the worker's merged output line by line until EOF.
+    """Read the session's stream-json output line by line until EOF.
 
     Recognised JSON object events feed the usage accumulator; everything
     else (non-JSON diagnostics, JSON that isn't an object) is echoed to
     ``sink`` so the operator keeps the visibility a captured pipe would
     otherwise hide. ``on_progress`` is called once per new turn (deduplicated
-    by message id) with a live usage snapshot. ``watch_writer``, when set,
-    receives each event for human-readable watch log output.
+    by message id) with a live usage snapshot. Reaching EOF (and closing the
+    stream) is also how the external-path monitor learns the session ended.
     """
     if stream is None:
         return
@@ -363,8 +420,6 @@ def _drain_stream(
                         last_message_id = mid
                         snap = accumulator.live_snapshot()
                         on_progress(*snap)
-                if watch_writer is not None:
-                    watch_writer.feed(event)
             else:
                 _echo(sink, line)
     finally:
@@ -379,119 +434,6 @@ def _echo(sink: TextIO, line: str) -> None:
         print(line, file=sink)
     except (OSError, ValueError):
         pass
-
-
-_WATCH_INPUT_MAX = 80
-
-
-class _WatchWriter:
-    """Write a human-readable activity log from stream-json events.
-
-    Called from the reader thread on every event; writes to a line-buffered
-    file so ``tail -f`` sees output immediately. Turn headers are deduped by
-    ``message.id`` — the same message is emitted once per content block, and
-    we want one header per logical turn.
-
-    Content block handling:
-    - ``text`` → assistant prose written as-is
-    - ``tool_use`` → ``→ Name(key=val, ...)`` with truncated input
-    - ``tool_result`` (in ``user`` events) → ``← N chars``
-    - unknown block types → silently skipped (forward-compat)
-    ``result`` events → ``=== done: N turns, $X.XX ===`` footer.
-    """
-
-    def __init__(self, path: Path) -> None:
-        self._file = path.open("a", buffering=1, encoding="utf-8")
-        self._turn = 0
-        self._last_message_id: str | None = None
-
-    def feed(self, event: dict[str, Any]) -> None:
-        event_type = event.get("type")
-        if event_type == "assistant":
-            self._feed_assistant(event)
-        elif event_type == "user":
-            self._feed_user(event)
-        elif event_type == "result":
-            self._feed_result(event)
-
-    def _feed_assistant(self, event: dict[str, Any]) -> None:
-        message = event.get("message")
-        if not isinstance(message, dict):
-            return
-        mid = message.get("id")
-        if mid != self._last_message_id:
-            self._last_message_id = mid
-            self._turn += 1
-            ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            self._write(f"\n=== Turn {self._turn} [{ts}] ===")
-        content = message.get("content")
-        if not isinstance(content, list):
-            return
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            btype = block.get("type")
-            if btype == "text":
-                text = block.get("text", "")
-                if text:
-                    self._write(text)
-            elif btype == "tool_use":
-                name = block.get("name", "?")
-                inp = block.get("input") or {}
-                args = ", ".join(
-                    f"{k}={repr(v)}"[:_WATCH_INPUT_MAX]
-                    for k, v in (inp.items() if isinstance(inp, dict) else [])
-                )
-                self._write(f"→ {name}({args})")
-
-    def _feed_user(self, event: dict[str, Any]) -> None:
-        message = event.get("message")
-        if not isinstance(message, dict):
-            return
-        content = message.get("content")
-        if not isinstance(content, list):
-            return
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "tool_result":
-                result_content = block.get("content") or []
-                size = sum(
-                    len(str(c.get("text", "")))
-                    for c in result_content
-                    if isinstance(c, dict)
-                )
-                self._write(f"← {size} chars")
-
-    def _feed_result(self, event: dict[str, Any]) -> None:
-        turns = event.get("num_turns")
-        cost = event.get("total_cost_usd")
-        if cost is not None:
-            self._write(f"\n=== done: {turns} turns, ${cost:.2f} ===")
-        else:
-            self._write(f"\n=== done: {turns} turns ===")
-        try:
-            self._file.close()
-        except OSError:
-            pass
-
-    def close(self) -> None:
-        """Close the file handle idempotently.
-
-        Called by the main thread after the reader thread is joined so the
-        handle is always released — even when the session was killed before a
-        ``result`` event arrived and ``_feed_result`` never ran.
-        """
-        try:
-            self._file.close()
-        except OSError:
-            pass
-
-    def _write(self, text: str) -> None:
-        try:
-            print(text, file=self._file)
-        except (OSError, ValueError):
-            pass
 
 
 def _coerce_int(value: Any) -> int:

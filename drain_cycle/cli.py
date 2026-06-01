@@ -50,8 +50,8 @@ _USAGE = (
     "       drain-cycle --help\n"
     "\n"
     "options:\n"
-    "  --watch, -w   write a human-readable activity log per issue;\n"
-    "                open a tmux split-pane tailing it when inside tmux"
+    "  --watch, -w   open a tmux split-pane per issue running the live\n"
+    "                claude session (requires running inside tmux)"
 )
 
 _WATCH_FLAGS = frozenset(["--watch", "-w"])
@@ -75,7 +75,8 @@ def main() -> None:
     if not remaining:
         if watch and not os.environ.get("TMUX"):
             print(
-                "drain-cycle: --watch: $TMUX not set — watch log written but no tmux pane opened",
+                "drain-cycle: --watch ignored: $TMUX not set — run inside tmux to "
+                "watch the live session; falling back to normal execution",
                 file=sys.stderr,
             )
         try:

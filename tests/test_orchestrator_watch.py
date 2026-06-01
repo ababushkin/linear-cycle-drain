@@ -1,16 +1,27 @@
-"""Watch mode: tmux pane lifecycle and watch log wiring.
+"""Watch mode: tmux pane lifecycle and the claude-in-pane FIFO wiring.
+
+In watch mode the pane *is* the claude session: the orchestrator runs
+``claude ... | tee <fifo>`` in a split pane and reads the same stream-json
+bytes off the FIFO. These tests mock tmux; where the external (pane) path is
+meant to succeed, a fake-pane writer thread opens the FIFO and streams a
+``result`` event (standing in for the pane's claude), so the orchestrator
+takes the FIFO path rather than spawning a subprocess.
 
 Tests cover:
-- watch log written for each issue when watch=True
-- non-tmux path: log written, no tmux subprocess spawned, no crash
-- tmux path: pane opened before session, prior pane killed before next issue,
-  final pane left open
-- tmux failure swallowed (drain continues)
+- watch=True drives claude through the pane (``| tee <fifo>``); no watch log
+  file is left behind
+- non-tmux path: no tmux subprocess spawned, drain falls back and completes
+- tmux failure swallowed (drain falls back to a normal spawn)
+- pane opened before each session, prior pane killed before the next issue,
+  final pane left open — using the ID split-window returned
+- FIFO startup timeout: pane torn down, drain falls back to a normal spawn
 """
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -80,17 +91,88 @@ def _setup_linear_stubs(monkeypatch: pytest.MonkeyPatch, raw_issues: list[dict],
     monkeypatch.setattr(linear, "set_state", lambda issue_id, state_name: None)
 
 
-def test_watch_log_created_per_issue_when_watch_true(
+def _fifo_from_pipeline(pipeline: str) -> str:
+    """Pull the FIFO path out of a ``... | tee <fifo>; exec ...`` pane command.
+
+    The shell separates ``tee <fifo>`` from the trailing ``exec`` on the ``;``;
+    ``shlex.split`` doesn't treat ``;`` as a separator, so the fifo token keeps
+    a trailing ``;`` when no space precedes it — strip it back off."""
+    tokens = shlex.split(pipeline)
+    return tokens[tokens.index("tee") + 1].rstrip(";")
+
+
+def _make_fake_tmux(
+    tmux_calls: list[list[str]],
+    pane_ids: list[int],
+    *,
+    done_marker: Path | None,
+) -> Any:
+    """A tmux stand-in that captures calls and, when ``done_marker`` is given,
+    simulates the pane's claude by writing a ``result`` event into the FIFO and
+    marking the issue done — so the orchestrator takes the external FIFO path.
+
+    With ``done_marker=None`` the pane is "opened" but never writes, so the
+    FIFO read times out and the orchestrator falls back to a normal spawn.
+    """
+    real_run = subprocess.run
+
+    def fake_tmux(args: Any, **kwargs: Any) -> Any:
+        if not (isinstance(args, list) and args and args[0] == "tmux"):
+            return real_run(args, **kwargs)
+        tmux_calls.append(list(args))
+        if len(args) > 1 and args[1] == "split-window":
+            pane_ids[0] += 1
+            pane = f"%{pane_ids[0]}"
+            if done_marker is not None:
+                pipeline = args[-1]
+                fifo = _fifo_from_pipeline(pipeline)
+                cwd = args[args.index("-c") + 1]
+                identifier = Path(cwd).name
+                _spawn_fake_pane(fifo, identifier, done_marker)
+            return type("R", (), {"stdout": f"{pane}\n", "returncode": 0})()
+        return type("R", (), {"stdout": "", "returncode": 0})()
+
+    return fake_tmux
+
+
+def _spawn_fake_pane(fifo: str, identifier: str, done_marker: Path) -> None:
+    """Open the FIFO and stream a single ``result`` event, then mark the issue
+    done before closing (so the marker is set before the reader sees EOF)."""
+
+    def _write() -> None:
+        f = open(fifo, "w")  # blocks until the orchestrator opens the read end
+        f.write(
+            json.dumps(
+                {
+                    "type": "result",
+                    "total_cost_usd": 0.0,
+                    "num_turns": 1,
+                    "session_id": "s",
+                    "is_error": False,
+                }
+            )
+            + "\n"
+        )
+        f.flush()
+        with open(done_marker, "a") as d:
+            d.write(identifier + "\n")
+        f.close()
+
+    threading.Thread(target=_write, daemon=True).start()
+
+
+def test_watch_runs_claude_in_pane_via_fifo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When watch=True, a watch log file is created for each issue beside
-    the run log, even without $TMUX set."""
+    """watch=True inside tmux opens a split pane running ``claude ... | tee
+    <fifo>`` per issue, reads the session off the FIFO, and leaves no watch
+    log file behind."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setenv("TMUX", "/tmp/tmux-stub,1234,0")
 
     done_marker = tmp_path / "done.txt"
     raw_issues = [_issue("ABA-W1", 1.0), _issue("ABA-W2", 2.0)]
@@ -98,23 +180,35 @@ def test_watch_log_created_per_issue_when_watch_true(
     fake_claude = _write_done_script(tmp_path, done_marker)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    exit_code = orchestrator.run(
-        repos.Repos(mapping={"test-repo": repo}), watch=True
+    tmux_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        subprocess, "run", _make_fake_tmux(tmux_calls, [0], done_marker=done_marker)
     )
+
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}), watch=True)
     assert exit_code == 0
 
+    split_calls = [c for c in tmux_calls if len(c) > 1 and c[1] == "split-window"]
+    assert len(split_calls) == 2
+    # The pane command runs the claude argv piped through tee into a FIFO —
+    # not a `tail -f` of any log file.
+    for call in split_calls:
+        pipeline = call[-1]
+        assert str(fake_claude) in pipeline
+        assert "--output-format" in pipeline and "stream-json" in pipeline
+        assert "| tee " in pipeline
+        assert "tail -f" not in pipeline
+
+    # No intermediate watch log artifact is left behind.
     runs_dir = tmp_path / ".drain-cycle" / "runs"
-    watch_logs = list(runs_dir.glob("*.watch.log"))
-    names = [p.name for p in watch_logs]
-    # One watch log per issue, name contains the issue identifier.
-    assert any("ABA-W1" in n for n in names)
-    assert any("ABA-W2" in n for n in names)
+    assert list(runs_dir.glob("*.watch.log")) == []
 
 
 def test_no_tmux_call_when_tmux_env_not_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When $TMUX is unset, no tmux subprocess is ever invoked."""
+    """When $TMUX is unset, no tmux subprocess is invoked and the drain falls
+    back to a normal spawn."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -138,9 +232,7 @@ def test_no_tmux_call_when_tmux_env_not_set(
 
     monkeypatch.setattr(subprocess, "run", capturing_run)
 
-    exit_code = orchestrator.run(
-        repos.Repos(mapping={"test-repo": repo}), watch=True
-    )
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}), watch=True)
     assert exit_code == 0
     assert tmux_calls == [], f"unexpected tmux calls: {tmux_calls}"
 
@@ -148,7 +240,8 @@ def test_no_tmux_call_when_tmux_env_not_set(
 def test_tmux_failure_does_not_crash_drain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failing tmux split-window must be swallowed; the drain completes."""
+    """A failing tmux split-window is swallowed; the drain falls back to a
+    normal spawn and completes."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -162,7 +255,6 @@ def test_tmux_failure_does_not_crash_drain(
     fake_claude = _write_done_script(tmp_path, done_marker)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
-    # Make tmux always raise an error.
     real_run = subprocess.run
 
     def failing_tmux(args: Any, **kwargs: Any) -> Any:
@@ -172,11 +264,10 @@ def test_tmux_failure_does_not_crash_drain(
 
     monkeypatch.setattr(subprocess, "run", failing_tmux)
 
-    exit_code = orchestrator.run(
-        repos.Repos(mapping={"test-repo": repo}), watch=True
-    )
-    # Drain must succeed even though tmux failed.
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}), watch=True)
+    # Drain must succeed (via the subprocess fallback) even though tmux failed.
     assert exit_code == 0
+    assert "ABA-TF" in _completed(done_marker)
 
 
 def test_tmux_pane_opened_and_prior_pane_killed_on_next_issue(
@@ -200,25 +291,11 @@ def test_tmux_pane_opened_and_prior_pane_killed_on_next_issue(
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
     tmux_calls: list[list[str]] = []
-    pane_id_counter = [0]
-    real_run = subprocess.run
-
-    def fake_tmux(args: Any, **kwargs: Any) -> Any:
-        if not (isinstance(args, list) and args and args[0] == "tmux"):
-            return real_run(args, **kwargs)
-        tmux_calls.append(list(args))
-        # split-window -P -F #{pane_id} returns the new pane's ID on stdout.
-        if len(args) > 1 and args[1] == "split-window":
-            pane_id_counter[0] += 1
-            mock = type("R", (), {"stdout": f"%{pane_id_counter[0]}\n", "returncode": 0})()
-            return mock
-        return type("R", (), {"stdout": "", "returncode": 0})()
-
-    monkeypatch.setattr(subprocess, "run", fake_tmux)
-
-    exit_code = orchestrator.run(
-        repos.Repos(mapping={"test-repo": repo}), watch=True
+    monkeypatch.setattr(
+        subprocess, "run", _make_fake_tmux(tmux_calls, [0], done_marker=done_marker)
     )
+
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}), watch=True)
     assert exit_code == 0
 
     split_calls = [c for c in tmux_calls if len(c) > 1 and c[1] == "split-window"]
@@ -233,19 +310,60 @@ def test_tmux_pane_opened_and_prior_pane_killed_on_next_issue(
     # split-window -P -F fix.
     killed_target = kill_calls[0][kill_calls[0].index("-t") + 1]
     assert killed_target == "%1", (
-        f"wrong pane killed: expected %1 (first tail pane), got {killed_target!r}"
+        f"wrong pane killed: expected %1 (first pane), got {killed_target!r}"
     )
 
 
-def test_watch_false_by_default_no_watch_logs(
+def test_fifo_timeout_falls_back_to_subprocess(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Default invocation (watch=False) writes no watch log files."""
+    """If the pane opens but never produces output, the FIFO read times out;
+    the pane is torn down and the drain falls back to a normal spawn."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TMUX", "/tmp/tmux-stub,1234,0")
+    # Keep the startup window short so the timeout path is quick.
+    monkeypatch.setattr(orchestrator, "_WATCH_FIFO_TIMEOUT_SECONDS", 0.2)
+
+    done_marker = tmp_path / "done.txt"
+    raw_issues = [_issue("ABA-TO", 1.0)]
+    _setup_linear_stubs(monkeypatch, raw_issues, done_marker)
+    fake_claude = _write_done_script(tmp_path, done_marker)
+    monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
+
+    tmux_calls: list[list[str]] = []
+    # done_marker=None → the fake pane never writes, so the FIFO read times out.
+    monkeypatch.setattr(
+        subprocess, "run", _make_fake_tmux(tmux_calls, [0], done_marker=None)
+    )
+
+    exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}), watch=True)
+    # Fallback spawn ran fake-claude, which marked the issue done.
+    assert exit_code == 0
+    assert "ABA-TO" in _completed(done_marker)
+
+    split_calls = [c for c in tmux_calls if len(c) > 1 and c[1] == "split-window"]
+    kill_calls = [c for c in tmux_calls if len(c) > 1 and c[1] == "kill-pane"]
+    assert len(split_calls) == 1
+    # The timed-out pane is torn down before the fallback spawn.
+    assert len(kill_calls) == 1
+    assert kill_calls[0][kill_calls[0].index("-t") + 1] == "%1"
+
+
+def test_watch_false_by_default_no_panes_or_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default invocation (watch=False) opens no panes and writes no watch
+    log files."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TMUX", "/tmp/tmux-stub,1234,0")
 
     done_marker = tmp_path / "done.txt"
     raw_issues = [_issue("ABA-DEF", 1.0)]
@@ -253,9 +371,14 @@ def test_watch_false_by_default_no_watch_logs(
     fake_claude = _write_done_script(tmp_path, done_marker)
     monkeypatch.setattr(orchestrator, "_CLAUDE_CMD", [str(fake_claude)])
 
+    tmux_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        subprocess, "run", _make_fake_tmux(tmux_calls, [0], done_marker=done_marker)
+    )
+
     exit_code = orchestrator.run(repos.Repos(mapping={"test-repo": repo}))
     assert exit_code == 0
+    assert tmux_calls == []
 
     runs_dir = tmp_path / ".drain-cycle" / "runs"
-    watch_logs = list(runs_dir.glob("*.watch.log"))
-    assert watch_logs == []
+    assert list(runs_dir.glob("*.watch.log")) == []

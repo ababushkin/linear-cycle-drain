@@ -2,7 +2,7 @@
 
 Design rationale for `drain-cycle`. Read this before making architectural changes — `AGENTS.md` points here.
 
-Fourteen decisions are recorded so a future reader doesn't have to reverse-engineer them from the code. ADRs would be heavier than this tool needs.
+Fifteen decisions are recorded so a future reader doesn't have to reverse-engineer them from the code. ADRs would be heavier than this tool needs.
 
 ## 1. The spawned agent updates Linear itself
 
@@ -247,3 +247,15 @@ Before this, a halted issue's worktree was preserved on disk for the operator to
 - *Resume by replaying the agent's last few turns from the worker stream-json log.* Rejected. The transcript is keyed by session and lives outside the worktree (§8); reconstructing context from it duplicates what `git log main..HEAD` and `git status` already tell the agent at the start of a resume. Two sources of truth where one suffices.
 - *Resume by passing `--continue` or `--resume <session-id>` to `claude -p` instead of changing the prompt.* Rejected because a halted worker may have died mid-turn with no clean session boundary; the next worker is a fresh `claude -p` against a worktree that already has commits. The prompt directive is the right level of abstraction: "this worktree carries prior committed work; read it before continuing." The mechanism is the same whether the prior session lived for one turn or one hour.
 - *Cap-halt resets when the operator manually marks the issue Done in Linear.* Considered — the cap counts non-Done entries, so a manual Done in Linear does NOT directly reset the cap, because the prior halted entries in the run log still carry their non-Done `final_linear_state`. The operator clears the cap by raising it, deleting the relevant run-log files, or simply not re-running. This is fine: the cap exists to prevent infinite resume loops, not to track Linear state — Linear state can flip independently of the on-disk history.
+
+## 15. `--watch` runs claude *in* the tmux pane, not a formatter tailing a log
+
+In `--watch` mode the operator wants to see the agent working in real time. The pane therefore **is** the `claude` session: the orchestrator runs `claude … | tee <fifo>` in a `tmux split-window`, and the same stream-json bytes that scroll in the pane flow through a named pipe (FIFO) to drain-cycle's reader thread. The reader opens the FIFO instead of a `subprocess.PIPE`; usage accounting, cost, and breach detection are byte-for-byte identical to the spawned path — there is exactly one `claude` process, and both consumers (the operator's terminal and the parser) see its raw output.
+
+**What this replaces.** The first cut tailed a *secondhand* view: the worker spawned `claude` normally, an internal `_WatchWriter` formatted each event into a human-readable activity log, and the pane ran `tail -f` on that file. The operator saw a filtered summary produced by drain-cycle, not the live session — and the formatter was a second place for stream-json knowledge to rot. `tee`-into-a-FIFO deletes the formatter and the intermediate file entirely (`runlog.watch_path` and `_WatchWriter` are gone): the pane shows precisely what `claude` emits.
+
+**FIFO startup is non-blocking with a timeout.** drain-cycle opens the read end `O_RDONLY | O_NONBLOCK` and `select`s up to ten seconds for the pane's `tee` to produce its first bytes, then clears `O_NONBLOCK` so the reader thread blocks normally until EOF. A reader-only FIFO with no writer is *not* readable in `select` until a writer connects (verified on macOS/BSD and Linux), so a pane that never started can't wedge the drain — the `select` simply times out. On timeout (or any pane/FIFO setup failure, or no `$TMUX`), the pane is torn down and the issue runs through the **normal subprocess path** unchanged. Watch is a convenience overlay; it never gates whether the cycle drains.
+
+**Breach kills the pane, not a process group.** On the spawned path a per-issue breach SIGKILLs the worker's process group (§9). On the watch path there is no child process to signal — `claude` belongs to the pane — so the worker calls a `kill_fn` the orchestrator wires to `tmux kill-pane`. Killing the pane terminates `claude` and its `tee`, which closes the FIFO write end and lets the reader reach EOF. The pane command ends in `; exec ${SHELL}` so the pane survives `claude`'s *normal* exit (the final issue's scrollback is preserved, AC of the pane-lifecycle: prior pane killed when the next issue starts, last one left open); `tee` still closes the FIFO on claude's exit, so EOF fires regardless of the trailing shell.
+
+**`exit_code` is `0` on the watch path.** The pane owns `claude`, so its real return code isn't observable from drain-cycle. The run-log entry records `exit_code=0`; the breach field and the result event's `is_error` carry the real outcome, and KR1 grading keys on `final_linear_state`, not the exit code. This is the one fidelity gap versus the spawned path, and it is cosmetic.
