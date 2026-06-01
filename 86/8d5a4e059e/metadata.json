@@ -3,7 +3,7 @@
   "checkpoint_id": "868d5a4e059e",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 0,
+  "checkpoints_count": 1,
   "files_touched": [
     "docs/design-decisions.md",
     "drain_cycle/cli.py",
@@ -20,13 +20,19 @@
       "transcript": "/86/8d5a4e059e/0/full.jsonl",
       "content_hash": "/86/8d5a4e059e/0/content_hash.txt",
       "prompt": "/86/8d5a4e059e/0/prompt.txt"
+    },
+    {
+      "metadata": "/86/8d5a4e059e/1/metadata.json",
+      "transcript": "/86/8d5a4e059e/1/full.jsonl",
+      "content_hash": "/86/8d5a4e059e/1/content_hash.txt",
+      "prompt": "/86/8d5a4e059e/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 19984,
-    "cache_creation_tokens": 215188,
-    "cache_read_tokens": 7277901,
-    "output_tokens": 83563,
-    "api_call_count": 53
+    "input_tokens": 20094,
+    "cache_creation_tokens": 347488,
+    "cache_read_tokens": 16688175,
+    "output_tokens": 135691,
+    "api_call_count": 148
   }
 }

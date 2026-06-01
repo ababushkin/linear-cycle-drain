@@ -1,0 +1,50 @@
+now launch a sub-agent to perform a review against the tickets original definition of done criteria, i've pasted the whole ticket below for context: Work on Linear issue ABA-338:
+
+<issue identifier="ABA-338">
+<title>Watch mode: live tmux pane for spawned Claude sessions</title>
+<description>
+## What
+
+Add `--watch` / `-w` flag to `drain-cycle` that, for each issue run, writes a human-readable activity log (assistant text, tool call names, tool result sizes) and — when inside a tmux session — opens a split pane tailing it live.
+
+## Why
+
+Spawned sessions are completely invisible. When the operator's terminal crashed mid-run, the drain continued blind with no way to tell if Claude was stuck, misbehaving, or burning budget on the wrong thing. The existing progress meter tells you *how much* happened (turns/tokens/cost), not *what* happened. This closes that gap without requiring interactive control of the subprocess.
+
+## Definition of done
+
+* `drain-cycle --watch` (or `-w`) accepted by CLI; zero-arg invocation unchanged
+* When `$TMUX` is set: a split pane opens per issue tailing the watch log; replaced when the next issue starts; final pane left open for scrollback
+* When `$TMUX` is not set: one-time warning printed, watch log still written (operator can `tail -f` manually)
+* Watch log written to `~/.drain-cycle/runs/<run-stem>-<issue-id>.watch.log`
+* Log format: timestamped turn headers, assistant prose, `→ ToolName(key=val)` lines, `← N chars` tool result lines, `=== done: N turns, $X.XX ===` footer
+* All existing streaming / token-counting / breach-monitoring behaviour preserved — no change to the `--output-format stream-json` pipeline
+* Tests cover: watch log content written correctly from stream-json events; non-tmux path writes log without crashing; pane open/close lifecycle
+
+## Assumptions
+
+* Sequential issue execution (already true — orchestrator is single-threaded)
+* macOS `tail -f`: watch log file must be touched before pane opens
+* `tmux` on `$PATH` when `$TMUX` is set
+* Unknown stream-json content block types are silently skipped (forward-compat graceful degradation)
+
+## Key risks
+
+* Line-buffered writes in the reader thread add minor latency — must not slow the JSON parsing path measurably
+* `tmux split-window` failures must be caught and swallowed; a broken tmux must not crash the drain run
+* Stream-json schema changes in future Claude CLI versions could silently degrade the watch log (acceptable — degrades to empty turns, not a crash)
+
+## Implementation sketch
+
+Four files: `worker.py` (watch log writing in `_drain_stream`), `runlog.py` (add `watch_path()` beside `debug_path()`), `orchestrator.py` (tmux pane lifecycle, pass `watch_log` to worker), `cli.py` (`--watch` flag).
+</description>
+<team name="Personal"/>
+<label>repo › drain-cycle</label>
+<label>review › high</label>
+<label>model › sonnet</label>
+<project name="Autonomous cycle drain - eliminate manual shepherding">A CLI that drains a Linear cycle by spawning fresh Claude Code sessions per issue — frees operator time for scoping and validation.</project>
+</issue>
+
+---
+
+i noticed that when you worked on this isue, you didn't do anything to the linear ticket (i.e. move it to in progress and then to done on completion) - why is that?
